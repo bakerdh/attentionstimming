@@ -11,10 +11,10 @@ format: pdf
 ```{r setup}
 #| warning: false
 
-processdata <- 1
+processdata <- 0
 
 # install R packages
-packagelist <- c('knitr','reticulate','osfr','bookdown') 
+packagelist <- c('knitr','reticulate','osfr','bookdown','grImport','tiff','rstatix','ez') 
 missingpackages <- packagelist[!packagelist %in% installed.packages()[,1]]
 if (length(missingpackages)>0){install.packages(missingpackages)}
 toinstall <- packagelist[which(!packagelist %in% (.packages()))]
@@ -29,7 +29,68 @@ if (!dir.exists('env')){
 
 use_virtualenv('env/')
 
-if (!dir.exists('local/processed')){dir.create('local/processed')}
+if (!dir.exists('local/processedE1')){dir.create('local/processedE1')}
+if (!dir.exists('local/processedE2')){dir.create('local/processedE2')}
+
+getcleanmean <- function(input){
+  s <- dim(input)
+  allsds <- apply(input,c(1,3),sd)
+  thresh <- quantile(allsds,0.95)
+  allmeans <- matrix(0,nrow=s[2],ncol=s[3])
+  for (ch in 1:s[3]){
+    temp <- allsds[,ch]
+    i <- which(temp<thresh)
+    allmeans[,ch] <- colMeans(input[i,,ch])
+  }
+return(allmeans)}
+
+getcleanCI <- function(input){
+  s <- dim(input)
+  allsds <- apply(input,c(1,3),sd)
+  thresh <- quantile(allsds,0.95)
+  allCI <- matrix(0,nrow=s[2],ncol=s[3])
+  for (ch in 1:s[3]){
+    temp <- allsds[,ch]
+    i <- which(temp<thresh)
+    allCI[,ch] <- 1.96*apply(input[i,,ch],2,sd)/sqrt(length(i))
+  }
+return(allCI)}
+
+flatalpha <- function(col, alpha=1){apply(sapply(col, col2rgb)/255, 2, function(x) rgb(x[1]*alpha + 1-alpha, x[2]*alpha + 1-alpha, x[3]*alpha + 1-alpha))}
+
+v4Interp <- function(df, xo, yo, rmax = .75, gridRes = 67) {
+  ## Create a function to perform Matlab's v4 interpolation.
+  ## Takes as input a data-frame with columns x, y, and z (x co-ordinates, y co-ordinates, and amplitude)
+  ## and variables xo and yo, the co-ordinates which will be use to create a grid for interpolation
+  xo <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+  yo <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+  xy <- df$x + df$y*sqrt(as.complex(-1))
+  d <- matrix(rep(xy,length(xy)),nrow = length(xy), ncol = length(xy))
+  d <- abs(d - t(d))
+  diag(d) <- 1
+  g <- (d^2) * (log(d)-1)   # Green's function.
+  diag(g) <- 0
+  weights <- qr.solve(g,df$z)
+  xy <- t(xy)
+  outmat <- matrix(nrow = gridRes,ncol = gridRes)
+  for (i in 1:gridRes){
+    for (j in 1:gridRes) {
+      test4 <- abs((xo[i,j] + sqrt(as.complex(-1))*yo[i,j]) - xy)
+      g <- (test4^2) * (log(test4)-1)
+      outmat[i,j] <- g %*% weights}}
+  outDf <- data.frame(x = xo[,1],outmat)
+  names(outDf)[1:length(yo[1,])+1] <- yo[1,]
+  return(outDf)}
+
+
+mnechans <- read.csv('local/MNEchannels.csv')
+mnechans <- mnechans[c(1:12,14:18,20:64),1]  # exclude the mastoids
+
+chandata <- read.csv('local/channeldata.csv')
+
+electrodeindices <- match(toupper(mnechans),chandata$Electrode)
+
+figdir <- 'Figures/'
 
 ```
 
@@ -37,7 +98,7 @@ if (!dir.exists('local/processed')){dir.create('local/processed')}
 
 # code to import raw EEG data and process
 
-if r.processdata==1:
+if r.processdata==2:
 
   import numpy as np
   import matplotlib.pyplot as plt
@@ -59,12 +120,28 @@ if r.processdata==1:
   from sklearn.linear_model import LogisticRegression
 
   ANT_montage = mne.channels.make_standard_montage("standard_1020")
-  reject_criteria = dict(eeg=150e-6)
-
-  for subj in range(501,503):
-    filename = "local/preprocessed/S" + str(subj) + ".set"
+  reject_criteria = None   #dict(eeg=150e-6)
+  
+  clf = make_pipeline(StandardScaler(), LogisticRegression(solver="liblinear"))
+  time_decod = SlidingEstimator(clf, n_jobs=10, scoring="roc_auc", verbose=True)
+  
+  legaltriggers = {
+    "1": 1,
+    "11": 2,
+    "12": 3,
+    "201": 4,
+    "202": 5,
+    "21": 6,
+    "22": 7,
+    "31": 8,
+    "32": 9   
+    }
+  sublist = list(range(501,506)) + list(range(508,542))
+  
+  for subj in range(0,len(sublist)):
+    filename = "local/preprocessed/S" + str(sublist[subj]) + ".set"
     raw = mne.io.read_raw_eeglab(filename,preload=True)
-    raw.drop_channels(["HEOG", "VEOG"])
+    raw.drop_channels(["HEOG", "VEOG", "M1", "M2"])
     raw.set_montage(ANT_montage)
   
     filtered = raw.filter(0.2,30)
@@ -74,11 +151,17 @@ if r.processdata==1:
     ica.exclude = [1, 2]  # details on how we picked these are omitted here
     ica.apply(filtered)
   
-    events, _ = mne.events_from_annotations(filtered)
+    events, _ = mne.events_from_annotations(filtered, event_id=legaltriggers)
   
     event_dict = {
         "cueleft": 4,
         "cueright": 5,
+        "targetleft/top": 2,
+        "targetleft/bottom": 3,
+        "targetright/top": 6,
+        "targetright/bottom": 7,
+        "responsetop": 8,
+        "responsebottom": 9
     }
   
     epochs = mne.Epochs(
@@ -91,43 +174,1915 @@ if r.processdata==1:
         preload=True,
     )
   
+    epochs.equalize_event_counts(["cueleft", "cueright"])
     cueepochs = epochs["cueleft", "cueright"]
-    X = cueepochs.get_data()  # MEG signals: n_epochs, n_meg_channels, n_times
+    X = cueepochs.get_data()  # EEG signals: n_epochs, n_meg_channels, n_times
     y = cueepochs.events[:, 2]  # target: auditory left vs visual left
     
-    clf = make_pipeline(StandardScaler(), LogisticRegression(solver="liblinear"))
-    
-    time_decod = SlidingEstimator(clf, n_jobs=None, scoring="roc_auc", verbose=True)
-    
-    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=None)
-    
-    # Mean scores across cross-validation splits
-    scores = np.mean(scores, axis=0)
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    cuedecode = np.mean(scores, axis=0)
 
-    filename = "local/processed/S" + str(subj) + "_decoding.csv"
+    epochs.equalize_event_counts(["targetleft", "targetright"])
+    targetepochs = epochs["targetleft", "targetright"]
+    X = targetepochs.get_data()  
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y<5] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>5] = 2
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetu = np.mean(scores, axis=0)
+
+    newevents, _ = mne.events_from_annotations(filtered, event_id=legaltriggers)
+
+    for i in range(1,len(events)):
+        if events[i,2]==4:
+            if events[i+1,2]==2:
+                newevents[i+1,2] = 11    #congruent left
+            if events[i+1,2]==3:
+                newevents[i+1,2] = 11    #congruent left
+            if events[i+1,2]==6:
+                newevents[i+1,2] = 14    #incongruent right   
+            if events[i+1,2]==7:
+                newevents[i+1,2] = 14    #incongruent right
+        if events[i,2]==5:
+             if events[i+1,2]==2:
+                 newevents[i+1,2] = 13    #incongruent left
+             if events[i+1,2]==3:
+                 newevents[i+1,2] = 13    #incongruent left
+             if events[i+1,2]==6:
+                 newevents[i+1,2] = 12    #congruent right
+             if events[i+1,2]==7:
+                 newevents[i+1,2] = 12    #congruent right        
+
+    event_dict2 = {
+         "congruent/left": 11,
+         "congruent/right": 12,
+         "incongruent/left": 13,
+         "incongruent/right": 14     
+     }     
+
+    epochsCI = mne.Epochs(
+        filtered,
+        newevents,
+        event_id=event_dict2,
+        tmin=-0.2,
+        tmax=1,
+        reject=reject_criteria,
+        preload=True,
+    )
+
+    epochsCI.equalize_event_counts(["congruent", "incongruent"])
+    targetepochs = epochsCI["congruent", "incongruent"]
+    X = targetepochs.get_data()  
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y<13] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>12] = 2
+
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    congincong = np.mean(scores, axis=0)
+
+    epochsCI.equalize_event_counts(["left", "right"])
+    targetepochs = epochsCI["left", "right"]
+    X = targetepochs.get_data() 
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y==13] = 1     # relabel the left and right conditions as 1 and 2
+    y[y==14] = 2
+    
+    i1 = np.array(np.where(y==11))
+    i2 = np.random.permutation(i1.shape[1])
+    y[i1[0,i2[0:49]]] = 1
+    i1 = np.array(np.where(y==12))
+    i2 = np.random.permutation(i1.shape[1])
+    y[i1[0,i2[0:49]]] = 2
+    i1 = np.array(np.where(y<10))
+    y = y[i1[0,:]]
+    X = X[i1[0,:],:,:]
+    
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetb = np.mean(scores, axis=0)
+
+    # export decoding results to csv text files
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_decoding.csv"
 
     times = pd.Series(range(-200,1001))
-    scores = pd.Series(scores)
+    cuedecode = pd.Series(cuedecode)
+    targetu = pd.Series(targetu)
+    congincong = pd.Series(congincong)
+    targetb = pd.Series(targetb)
     
-    output = pd.concat([times,scores],axis=1)
-    output.columns = ['Time','Accuracy']
+    output = pd.concat([times,cuedecode,targetu,congincong,targetb],axis=1)
+    output.columns = ['Time','Cue','TargetU','CongIncong','TargetB']
     
+    output.to_csv(filename,index=False)
+
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_cueleft.csv"
+    ERP = epochs["cueleft"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_cueright.csv"
+    ERP = epochs["cueright"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_targetleft.csv"
+    ERP = epochs["targetleft"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_targetright.csv"
+    ERP = epochs["targetright"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE1/S" + str(sublist[subj]) + "_events.csv"
+    dataout = np.asarray(events)
+    np.savetxt(filename, dataout, delimiter=",")
+    
+
+```
+
+```{python ProcessExpt2}
+
+# code to import raw EEG data and process
+
+if r.processdata==2:
+
+  import numpy as np
+  import matplotlib.pyplot as plt
+  import pandas as pd
+  import mne
+  from mne.decoding import (
+      SlidingEstimator,
+      GeneralizingEstimator,
+      Scaler,
+      cross_val_multiscore,
+      LinearModel,
+      get_coef,
+      Vectorizer,
+      CSP
+  )
+
+  from sklearn.pipeline import make_pipeline
+  from sklearn.preprocessing import StandardScaler
+  from sklearn.linear_model import LogisticRegression
+
+  ANT_montage = mne.channels.make_standard_montage("standard_1020")
+  reject_criteria = None   #dict(eeg=150e-6)
+  
+  clf = make_pipeline(StandardScaler(), LogisticRegression(solver="liblinear"))
+  time_decod = SlidingEstimator(clf, n_jobs=10, scoring="roc_auc", verbose=True)
+
+  legaltriggers = {
+    "1": 1,
+    "11": 2,
+    "12": 3,
+    "101": 4,
+    "102": 5,
+    "21": 6,
+    "22": 7,
+    "31": 8,
+    "32": 9,
+    "2": 10
+    }
+  sublist = list(range(201,202)) + list(range(204,213)) + list(range(214,226))
+
+  for subj in range(0,len(sublist)):
+    filename = "local/preprocessed/S" + str(sublist[subj]) + ".set"
+    
+    raw = mne.io.read_raw_eeglab(filename,preload=True)
+    raw.drop_channels(["HEOG", "VEOG", "M1", "M2"])
+    raw.set_montage(ANT_montage)
+  
+    filtered = raw.filter(0.2,30)
+  
+    ica = mne.preprocessing.ICA(n_components=20, random_state=97, max_iter=800)
+    ica.fit(filtered)
+    ica.exclude = [1, 2]  # details on how we picked these are omitted here
+    ica.apply(filtered)
+  
+    events, _ = mne.events_from_annotations(filtered, event_id=legaltriggers)
+  
+    event_dict = {
+        "cueleft": 4,
+        "cueright": 5,
+        "targetleft/top": 2,
+        "targetleft/bottom": 3,
+        "targetright/top": 6,
+        "targetright/bottom": 7,
+        "responsetop": 8,
+        "responsebottom": 9,
+        "nonstimming": 1,
+        "stimming": 10
+    }
+  
+    epochs = mne.Epochs(
+        filtered,
+        events,
+        event_id=event_dict,
+        tmin=-0.2,
+        tmax=1,
+        reject=reject_criteria,
+        preload=True,
+    )
+  
+    epochs.equalize_event_counts(["cueleft", "cueright"])
+    cueepochs = epochs["cueleft", "cueright"]
+    X = cueepochs.get_data()  # EEG signals: n_epochs, n_meg_channels, n_times
+    y = cueepochs.events[:, 2]  # target: auditory left vs visual left
+    
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    cuedecode = np.mean(scores, axis=0)
+
+    epochs.equalize_event_counts(["targetleft", "targetright"])
+    targetepochs = epochs["targetleft", "targetright"]
+    X = targetepochs.get_data()  
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y<5] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>5] = 2
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetu = np.mean(scores, axis=0)
+
+    newevents, _ = mne.events_from_annotations(filtered, event_id=legaltriggers)
+
+    for i in range(1,len(events)):
+        if events[i,2]==4:
+            if events[i+1,2]==2:
+                newevents[i+1,2] = 11    #congruent left
+            if events[i+1,2]==3:
+                newevents[i+1,2] = 11    #congruent left
+            if events[i+1,2]==6:
+                newevents[i+1,2] = 14    #incongruent right   
+            if events[i+1,2]==7:
+                newevents[i+1,2] = 14    #incongruent right
+        if events[i,2]==5:
+             if events[i+1,2]==2:
+                 newevents[i+1,2] = 13    #incongruent left
+             if events[i+1,2]==3:
+                 newevents[i+1,2] = 13    #incongruent left
+             if events[i+1,2]==6:
+                 newevents[i+1,2] = 12    #congruent right
+             if events[i+1,2]==7:
+                 newevents[i+1,2] = 12    #congruent right        
+
+    event_dict2 = {
+         "congruent/left": 11,
+         "congruent/right": 12,
+         "incongruent/left": 13,
+         "incongruent/right": 14     
+     }     
+     
+
+    epochsCI = mne.Epochs(
+        filtered,
+        newevents,
+        event_id=event_dict2,
+        tmin=-0.2,
+        tmax=1,
+        reject=reject_criteria,
+        preload=True,
+    )
+
+    epochsCI.equalize_event_counts(["congruent", "incongruent"])
+    targetepochs = epochsCI["congruent", "incongruent"]
+    X = targetepochs.get_data()  
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y<13] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>12] = 2
+
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    congincong = np.mean(scores, axis=0)
+
+    epochsCI.equalize_event_counts(["left", "right"])
+    targetepochs = epochsCI["left", "right"]
+    X = targetepochs.get_data() 
+    y = targetepochs.events[:, 2]  # target: auditory left vs visual left
+    y[y==13] = 1     # relabel the left and right conditions as 1 and 2
+    y[y==14] = 2
+    
+    i1 = np.array(np.where(y==11))
+    i2 = np.random.permutation(i1.shape[1])
+    y[i1[0,i2[0:49]]] = 1
+    i1 = np.array(np.where(y==12))
+    i2 = np.random.permutation(i1.shape[1])
+    y[i1[0,i2[0:49]]] = 2
+    i1 = np.array(np.where(y<10))
+    y = y[i1[0,:]]
+    X = X[i1[0,:],:,:]
+    
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetb = np.mean(scores, axis=0)
+
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_cueleft.csv"
+    ERP = epochs["cueleft"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_cueright.csv"
+    ERP = epochs["cueright"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_targetleft.csv"
+    ERP = epochs["targetleft"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_targetright.csv"
+    ERP = epochs["targetright"].average()
+    dataout = np.transpose(np.asarray(ERP.data))*1000000
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_events.csv"
+    dataout = np.asarray(events)
+    np.savetxt(filename, dataout, delimiter=",")
+    
+    
+    newevents2, _ = mne.events_from_annotations(filtered, event_id=legaltriggers)
+    stimcond = 0
+    
+    for i in range(0,len(events)):
+        if events[i,2] == 1: stimcond = 1 
+        if events[i,2] == 10: stimcond = 2 
+        if events[i,2] in range(2,10): newevents2[i,2] = events[i,2] + (100*stimcond)
+
+    event_dict3 = {
+        "nostimcueleft": 104,
+        "nostimcueright": 105,
+        "nostimtargetleft/top": 102,
+        "nostimtargetleft/bottom": 103,
+        "nostimtargetright/top": 106,
+        "nostimtargetright/bottom": 107,
+        "stimcueleft": 204,
+        "stimcueright": 205,
+        "stimtargetleft/top": 202,
+        "stimtargetleft/bottom": 203,
+        "stimtargetright/top": 206,
+        "stimtargetright/bottom": 207
+    }
+
+    splitepochs = mne.Epochs(
+        filtered,
+        newevents2,
+        event_id=event_dict3,
+        tmin=-0.2,
+        tmax=1,
+        reject=reject_criteria,
+        preload=True,
+    )
+
+    splitepochs.equalize_event_counts(["nostimcueleft", "nostimcueright"])
+    cueepochs2 = splitepochs["nostimcueleft", "nostimcueright"]
+    X = cueepochs2.get_data()  # EEG signals: n_epochs, n_meg_channels, n_times
+    y = cueepochs2.events[:, 2]-100  # target: auditory left vs visual left
+
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    cuedecodeNostim = np.mean(scores, axis=0)
+
+    splitepochs.equalize_event_counts(["nostimtargetleft", "nostimtargetright"])
+    targetepochs2 = splitepochs["nostimtargetleft", "nostimtargetright"]
+    X = targetepochs2.get_data()
+    y = targetepochs2.events[:, 2]  # target: auditory left vs visual left
+    y[y<105] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>105] = 2
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetuNostim = np.mean(scores, axis=0)
+
+    splitepochs.equalize_event_counts(["stimcueleft", "stimcueright"])
+    cueepochs3 = splitepochs["stimcueleft", "stimcueright"]
+    X = cueepochs3.get_data()  # EEG signals: n_epochs, n_meg_channels, n_times
+    y = cueepochs3.events[:, 2]-200  # target: auditory left vs visual left
+
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    cuedecodeStim = np.mean(scores, axis=0)
+
+    splitepochs.equalize_event_counts(["stimtargetleft", "stimtargetright"])
+    targetepochs3 = splitepochs["stimtargetleft", "stimtargetright"]
+    X = targetepochs3.get_data()
+    y = targetepochs3.events[:, 2]  # target: auditory left vs visual left
+    y[y<205] = 1     # relabel the left and right conditions as 1 and 2
+    y[y>205] = 2
+    scores = cross_val_multiscore(time_decod, X, y, cv=10, n_jobs=10)
+    targetuStim = np.mean(scores, axis=0)
+
+    # export decoding results to csv text files
+    filename = "local/processedE2/S" + str(sublist[subj]) + "_decoding.csv"
+
+    times = pd.Series(range(-200,1001))
+    cuedecode = pd.Series(cuedecode)
+    targetu = pd.Series(targetu)
+    congincong = pd.Series(congincong)
+    targetb = pd.Series(targetb)
+    cuedecodeN = pd.Series(cuedecodeNostim)
+    cuedecodeS = pd.Series(cuedecodeStim)
+    targetuN = pd.Series(targetuNostim)
+    targetuS = pd.Series(targetuStim)
+
+    output = pd.concat([times,cuedecode,targetu,congincong,targetb,cuedecodeN,cuedecodeS,targetuN,targetuS],axis=1)
+    output.columns = ['Time','Cue','TargetU','CongIncong','TargetB','CueNostim','CueStim','TargetUNostim','TargetUStim']
+
     output.to_csv(filename,index=False)
     
 ```
 
+```{r collateprocessed1}
+#| warning: false
 
+if (processdata>0){
+  
+  d <- dir('local/processedE1',pattern='*_decoding.csv',full.names=TRUE)
+  
+  allCue <- matrix(0,nrow=1201,ncol=length(d))
+  allTargetU <- matrix(0,nrow=1201,ncol=length(d))
+  allCongIncong <- matrix(0,nrow=1201,ncol=length(d))
+  allTargetB <- matrix(0,nrow=1201,ncol=length(d))
+  for (s in 1:length(d)){
+    decodingdata <- read.csv(d[s])
+    allCue[,s] <- decodingdata$Cue
+    allTargetU[,s] <- decodingdata$TargetU
+    allCongIncong[,s] <- decodingdata$CongIncong
+    allTargetB[,s] <- decodingdata$TargetB
+  }
+  
+  meandecoding <- decodingdata
+  meandecoding$Cue <- rowMeans(allCue)
+  meandecoding$TargetU <- rowMeans(allTargetU)
+  meandecoding$CongIncong <- rowMeans(allCongIncong)
+  meandecoding$TargetB <- rowMeans(allTargetB)
+  
+  CIdecoding <- decodingdata
+  CIdecoding$Cue <- apply(allCue,1,sd)/sqrt(ncol(allCue))*1.96
+  CIdecoding$TargetU <- apply(allTargetU,1,sd)/sqrt(ncol(allTargetU))*1.96
+  CIdecoding$CongIncong <- apply(allCongIncong,1,sd)/sqrt(ncol(allCongIncong))*1.96
+  CIdecoding$TargetB <- apply(allTargetB,1,sd)/sqrt(ncol(allTargetB))*1.96
+  
+  d <- dir('local/processedE1',pattern='*_cueleft.csv',full.names=TRUE)
+  allcueleft <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    allcueleft[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE1',pattern='*_cueright.csv',full.names=TRUE)
+  allcueright <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    allcueright[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE1',pattern='*_targetleft.csv',full.names=TRUE)
+  alltargetleft <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    alltargetleft[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE1',pattern='*_targetright.csv',full.names=TRUE)
+  alltargetright <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    alltargetright[s,,] <- as.matrix(ERPdata)
+  }
+  
+  meancueleft <- getcleanmean(allcueleft)
+  meancueright <- getcleanmean(allcueright)
+  meantargetleft <- getcleanmean(alltargetleft)
+  meantargetright <- getcleanmean(alltargetright)
+
+  CIcueleft <- getcleanCI(allcueleft)
+  CIcueright <- getcleanCI(allcueright)
+  CItargetleft <- getcleanCI(alltargetleft)
+  CItargetright <- getcleanCI(alltargetright)
+  
+  save(file='local/Exp1Group.RData',list=c('meandecoding','CIdecoding','meancueleft','CIcueleft','meancueright','CIcueright','meantargetleft','CItargetleft','meantargetright','CItargetright'))  
+  
+}
+
+```
+
+```{r collateprocessed2}
+#| warning: false
+
+if (processdata>0){
+  
+  d <- dir('local/processedE2',pattern='*_decoding.csv',full.names=TRUE)
+  
+  allCue <- matrix(0,nrow=1201,ncol=length(d))
+  allTargetU <- matrix(0,nrow=1201,ncol=length(d))
+  allCongIncong <- matrix(0,nrow=1201,ncol=length(d))
+  allTargetB <- matrix(0,nrow=1201,ncol=length(d))
+  allCueNostim <- matrix(0,nrow=1201,ncol=length(d))
+  allCueStim <- matrix(0,nrow=1201,ncol=length(d))
+  for (s in 1:length(d)){
+    decodingdata <- read.csv(d[s])
+    allCue[,s] <- decodingdata$Cue
+    allTargetU[,s] <- decodingdata$TargetU
+    allCongIncong[,s] <- decodingdata$CongIncong
+    allTargetB[,s] <- decodingdata$TargetB
+    allCueNostim[,s] <- decodingdata$CueNostim
+    allCueStim[,s] <- decodingdata$CueStim
+  }
+  
+  meandecoding <- decodingdata
+  meandecoding$Cue <- rowMeans(allCue)
+  meandecoding$TargetU <- rowMeans(allTargetU)
+  meandecoding$CongIncong <- rowMeans(allCongIncong)
+  meandecoding$TargetB <- rowMeans(allTargetB)
+  meandecoding$CueNostim <- rowMeans(allCueNostim)
+  meandecoding$CueStim <- rowMeans(allCueStim)
+  
+  CIdecoding <- decodingdata
+  CIdecoding$Cue <- apply(allCue,1,sd)/sqrt(ncol(allCue))*1.96
+  CIdecoding$TargetU <- apply(allTargetU,1,sd)/sqrt(ncol(allTargetU))*1.96
+  CIdecoding$CongIncong <- apply(allCongIncong,1,sd)/sqrt(ncol(allCongIncong))*1.96
+  CIdecoding$TargetB <- apply(allTargetB,1,sd)/sqrt(ncol(allTargetB))*1.96
+  CIdecoding$CueNoStim <- apply(allCueNoStim,1,sd)/sqrt(ncol(allCueNoStim))*1.96
+  CIdecoding$CueStim <- apply(allCueStim,1,sd)/sqrt(ncol(allCueStim))*1.96
+  
+  d <- dir('local/processedE2',pattern='*_cueleft.csv',full.names=TRUE)
+  allcueleft <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    allcueleft[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE2',pattern='*_cueright.csv',full.names=TRUE)
+  allcueright <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    allcueright[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE2',pattern='*_targetleft.csv',full.names=TRUE)
+  alltargetleft <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    alltargetleft[s,,] <- as.matrix(ERPdata)
+  }
+  d <- dir('local/processedE2',pattern='*_targetright.csv',full.names=TRUE)
+  alltargetright <- array(0,dim=c(length(d),1201,62))
+  for (s in 1:length(d)){
+    ERPdata <- read.csv(d[s],header=FALSE)
+    alltargetright[s,,] <- as.matrix(ERPdata)
+  }
+  
+  meancueleft <- getcleanmean(allcueleft)
+  meancueright <- getcleanmean(allcueright)
+  meantargetleft <- getcleanmean(alltargetleft)
+  meantargetright <- getcleanmean(alltargetright)
+
+  CIcueleft <- getcleanCI(allcueleft)
+  CIcueright <- getcleanCI(allcueright)
+  CItargetleft <- getcleanCI(alltargetleft)
+  CItargetright <- getcleanCI(alltargetright)
+  
+  save(file='local/Exp2Group.RData',list=c('meandecoding','CIdecoding','meancueleft','CIcueleft','meancueright','CIcueright','meantargetleft','CItargetleft','meantargetright','CItargetright'))  
+  
+}
+
+```
+
+```{r analyseresponses1}
+#| warning: false
+
+if (processdata>0){
+  
+  d <- dir('local/processedE1',pattern='_events.csv',full.names=TRUE)
+  
+  allRT <- matrix(0, nrow=length(d), 2)
+  allaccuracy <- matrix(0, nrow=length(d), 2)
+  
+  for (s in 1:length(d)){
+  respdata <- read.csv(d[s],header=FALSE)
+  
+  cueside <- NULL
+  targetside <- NULL
+  targetpos <- NULL
+  iscorrect <- NULL
+  RT <- NULL
+  trialcount <- 0
+  listpos <- 0
+  
+  while (listpos<nrow(respdata)){
+    listpos <- listpos + 1
+    if (sum(respdata[listpos,3]==c(4,5))){
+      trialcount <- trialcount + 1
+      cueside[trialcount] <- respdata[listpos,3]-3
+    }
+    if (sum(respdata[listpos,3]==c(2,3,6,7))){
+      targetonset <- respdata[listpos,1]
+    }        
+    if (sum(respdata[listpos,3]==c(2,3))){
+      targetside[trialcount] <- 1
+    }    
+    if (sum(respdata[listpos,3]==c(6,7))){
+      targetside[trialcount] <- 2
+    }   
+    if (sum(respdata[listpos,3]==c(2,6))){
+      targetpos[trialcount] <- 1
+    }    
+    if (sum(respdata[listpos,3]==c(3,7))){
+      targetpos[trialcount] <- 2
+    }      
+    
+    if (sum(respdata[listpos,3]==c(8,9))){
+      if ((respdata[listpos,3]==8) & (targetpos[trialcount]==1)){iscorrect[trialcount] <- 0}
+      if ((respdata[listpos,3]==8) & (targetpos[trialcount]==2)){iscorrect[trialcount] <- 1}
+      if ((respdata[listpos,3]==9) & (targetpos[trialcount]==1)){iscorrect[trialcount] <- 1}
+      if ((respdata[listpos,3]==9) & (targetpos[trialcount]==2)){iscorrect[trialcount] <- 0}
+      RT[trialcount] <- respdata[listpos,1] - targetonset
+    }      
+
+  }
+  
+  congincong <- cueside==targetside
+  subjresps <- data.frame(cueside,targetside,congincong,targetpos,iscorrect,RT)
+  
+  allcong <- subset(subjresps,congincong==TRUE)
+  allaccuracy[s,1] <- mean(allcong$iscorrect)
+  allRT[s,1] <- mean(20*log10(allcong$RT))
+  allincong <- subset(subjresps,congincong==FALSE)
+  allaccuracy[s,2] <- mean(allincong$iscorrect)
+  allRT[s,2] <- mean(20*log10(allincong$RT))
+  }
+  
+  save(file='local/Expt1resps.RData',list=c('allRT','allaccuracy'))
+}
+
+load('local/Expt1resps.RData')
+
+ACCtest <- t.test(allaccuracy[,1],allaccuracy[,2],paired=TRUE)
+temp <- allaccuracy[,1]-allaccuracy[,2]
+ACCd <- abs(mean(temp))/sd(temp)
+accdiff <- 100*(mean(allaccuracy[,1])-mean(allaccuracy[,2]))
+
+RTtest <- t.test(allRT[,1],allRT[,2],paired=TRUE)
+temp <- allRT[,1]-allRT[,2]
+RTd <- abs(mean(temp))/sd(temp)
+RTdiff <- 10^(mean(allRT[,2])/20)-10^(mean(allRT[,1])/20)
+
+```
+
+```{r analyseresponses2}
+#| warning: false
+
+if (processdata>0){
+  
+  d <- dir('local/processedE2',pattern='_events.csv',full.names=TRUE)
+  
+  allRT <- matrix(0, nrow=length(d), 4)
+  allaccuracy <- matrix(0, nrow=length(d), 4)
+  
+  for (s in 1:length(d)){
+  respdata <- read.csv(d[s],header=FALSE)
+  
+  cueside <- NULL
+  targetside <- NULL
+  targetpos <- NULL
+  iscorrect <- NULL
+  RT <- NULL
+  stimcond <- NULL
+  trialcount <- 0
+  listpos <- 0
+  stimblock <- 0
+  
+  while (listpos<nrow(respdata)){
+    listpos <- listpos + 1
+    if (respdata[listpos,3]==1){stimblock <- 1}
+    if (respdata[listpos,3]==10){stimblock <- 2}
+    
+    if (sum(respdata[listpos,3]==c(4,5))){
+      trialcount <- trialcount + 1
+      cueside[trialcount] <- respdata[listpos,3]-3
+    }
+    if (sum(respdata[listpos,3]==c(2,3,6,7))){
+      targetonset <- respdata[listpos,1]
+    }        
+    if (sum(respdata[listpos,3]==c(2,3))){
+      targetside[trialcount] <- 1
+    }    
+    if (sum(respdata[listpos,3]==c(6,7))){
+      targetside[trialcount] <- 2
+    }   
+    if (sum(respdata[listpos,3]==c(2,6))){
+      targetpos[trialcount] <- 1
+    }    
+    if (sum(respdata[listpos,3]==c(3,7))){
+      targetpos[trialcount] <- 2
+    }     
+    
+    stimcond[trialcount] <- stimblock
+    
+    if (sum(respdata[listpos,3]==c(8,9))){
+      if ((respdata[listpos,3]==8) & (targetpos[trialcount]==1)){iscorrect[trialcount] <- 0}
+      if ((respdata[listpos,3]==8) & (targetpos[trialcount]==2)){iscorrect[trialcount] <- 1}
+      if ((respdata[listpos,3]==9) & (targetpos[trialcount]==1)){iscorrect[trialcount] <- 1}
+      if ((respdata[listpos,3]==9) & (targetpos[trialcount]==2)){iscorrect[trialcount] <- 0}
+      RT[trialcount] <- respdata[listpos,1] - targetonset
+    }      
+
+  }
+  
+  congincong <- cueside==targetside
+  subjresps <- data.frame(stimcond,cueside,targetside,congincong,targetpos,iscorrect,RT)
+  
+  temp <- subset(subjresps,stimcond==1)
+  allcong <- subset(temp,congincong==TRUE)
+  allaccuracy[s,1] <- mean(allcong$iscorrect)
+  allRT[s,1] <- mean(20*log10(allcong$RT))
+  allincong <- subset(temp,congincong==FALSE)
+  allaccuracy[s,2] <- mean(allincong$iscorrect)
+  allRT[s,2] <- mean(20*log10(allincong$RT))
+  
+  temp <- subset(subjresps,stimcond==2)
+  allcong <- subset(temp,congincong==TRUE)
+  allaccuracy[s,3] <- mean(allcong$iscorrect)
+  allRT[s,3] <- mean(20*log10(allcong$RT))
+  allincong <- subset(temp,congincong==FALSE)
+  allaccuracy[s,4] <- mean(allincong$iscorrect)
+  allRT[s,4] <- mean(20*log10(allincong$RT))
+  
+  }
+  
+  save(file='local/Expt2resps.RData',list=c('allRT','allaccuracy'))
+}
+
+load('local/Expt2resps.RData')
+
+# restructure for 2x2 ANOVA
+
+accuracy <- as.vector(allaccuracy)
+participant <- as.factor(rep(1:nrow(allaccuracy),4))
+stimcond <- as.factor(rep(1:2,each=(2*nrow(allaccuracy))))
+congruent <- as.factor(rep(1:2,each=nrow(allaccuracy),2))
+accuracyaov <- data.frame(accuracy,participant,stimcond,congruent)
+accAOVresults <- ezANOVA(accuracyaov, dv=accuracy, wid=participant, within=c(stimcond,congruent))
+
+RT <- as.vector(allRT)
+participant <- as.factor(rep(1:nrow(allRT),4))
+stimcond <- as.factor(rep(1:2,each=(2*nrow(allRT))))
+congruent <- as.factor(rep(1:2,each=nrow(allRT),2))
+RTaov <- data.frame(RT,participant,stimcond,congruent)
+RTAOVresults <- ezANOVA(RTaov, dv=RT, wid=participant, within=c(stimcond,congruent))
+
+```
+
+```{r makeplotExpt1resps}
+#| include: false
+#| output: false
+#| warning: false
+
+if (processdata>0){
+
+load('local/Expt1resps.RData')
+
+pdf(paste0(figdir,"Exp1resps.pdf"), bg="transparent", height = 5.5, width = 5.5)
+
+plotlims <- c(49.5,58,0.7,1)  
+ticklocsx <- 20*log10(seq(300,800,100))    # locations of tick marks on x axis
+ticklocsy <- seq(0.7,1,0.1)    # locations of tick marks on y axis
+ticklabelsx <- seq(300,800,100)        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Reaction time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+coltrans1=rgb(0,0,1,alpha=0.2)
+coltrans2=rgb(1,0,0,alpha=0.2)
+
+a <- density(allRT[,1])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans1,border=NA) 
+a <- density(allRT[,2])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans2,border=NA) 
+
+a <- density(allaccuracy[,1])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans1,border=NA) 
+a <- density(allaccuracy[,2])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans2,border=NA) 
+
+
+for (n in 1:nrow(allRT)){lines(allRT[n,],allaccuracy[n,],col='grey')}
+points(allRT[,1],allaccuracy[,1],pch=16,col=flatalpha('blue',0.4))
+points(allRT[,2],allaccuracy[,2],pch=16,col=flatalpha('red',0.4))
+
+for (cond in 1:2){
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])+(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])-(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])+(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])-(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+}
+
+points(mean(allRT[,1]),mean(allaccuracy[,1]),pch=21,cex=2,lwd=2,bg='blue')
+points(mean(allRT[,2]),mean(allaccuracy[,2]),pch=21,cex=2,lwd=2,bg='red')
+
+legend(50,0.82,c('Congruent','Incongruent'),pch=21,pt.bg=c('blue','red'),pt.cex=2,pt.lwd=2,box.lwd=2)
+
+dev.off()
+}
+
+```
+
+```{r makeplotExpt2resps}
+#| include: false
+#| output: false
+#| warning: false
+
+if (processdata>0){
+
+load('local/Expt2resps.RData')
+
+pdf(paste0(figdir,"Exp2resps.pdf"), bg="transparent", height = 5.5, width = 10)
+
+par(mfcol=c(1,2))
+
+plotlims <- c(49.5,58,0.7,1)  
+ticklocsx <- 20*log10(seq(300,800,100))    # locations of tick marks on x axis
+ticklocsy <- seq(0.7,1,0.1)    # locations of tick marks on y axis
+ticklabelsx <- seq(300,800,100)        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Reaction time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+coltrans1=rgb(0,0,1,alpha=0.2)
+coltrans2=rgb(1,0,0,alpha=0.2)
+
+a <- density(allRT[,1])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans1,border=NA) 
+a <- density(allRT[,2])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans2,border=NA) 
+
+a <- density(allaccuracy[,1])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans1,border=NA) 
+a <- density(allaccuracy[,2])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans2,border=NA) 
+
+
+for (n in 1:nrow(allRT)){lines(allRT[n,1:2],allaccuracy[n,1:2],col='grey')}
+points(allRT[,1],allaccuracy[,1],pch=16,col=flatalpha('blue',0.4))
+points(allRT[,2],allaccuracy[,2],pch=16,col=flatalpha('red',0.4))
+
+for (cond in 1:2){
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])+(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])-(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])+(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])-(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+}
+
+points(mean(allRT[,1]),mean(allaccuracy[,1]),pch=21,cex=2,lwd=2,bg='blue')
+points(mean(allRT[,2]),mean(allaccuracy[,2]),pch=21,cex=2,lwd=2,bg='red')
+
+legend(50,0.82,c('Congruent','Incongruent'),pch=21,pt.bg=c('blue','red'),pt.cex=2,pt.lwd=2,box.lwd=2)
+
+
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Reaction time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+coltrans1=rgb(0,0,1,alpha=0.2)
+coltrans2=rgb(1,0,0,alpha=0.2)
+
+a <- density(allRT[,3])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans1,border=NA) 
+a <- density(allRT[,4])
+a$y <- 0.05*(a$y/max(a$y))
+polygon(a$x, a$y+0.7, col=coltrans2,border=NA) 
+
+a <- density(allaccuracy[,3])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans1,border=NA) 
+a <- density(allaccuracy[,4])
+a$y <- 1.5*(a$y/max(a$y))
+polygon(a$y+49.5, a$x, col=coltrans2,border=NA) 
+
+
+for (n in 1:nrow(allRT)){lines(allRT[n,3:4],allaccuracy[n,3:4],col='grey')}
+points(allRT[,3],allaccuracy[,3],pch=16,col=flatalpha('blue',0.4))
+points(allRT[,4],allaccuracy[,4],pch=16,col=flatalpha('red',0.4))
+
+for (cond in 3:4){
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])+(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond])-(1.96*sd(allRT[,cond])/sqrt(nrow(allRT))),mean(allaccuracy[,cond]),angle=90,lwd=2,length=0.05)
+
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])+(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+arrows(mean(allRT[,cond]),mean(allaccuracy[,cond]),mean(allRT[,cond]),mean(allaccuracy[,cond])-(1.96*sd(allaccuracy[,cond])/sqrt(nrow(allaccuracy))),angle=90,lwd=2,length=0.05)
+}
+
+points(mean(allRT[,3]),mean(allaccuracy[,3]),pch=21,cex=2,lwd=2,bg='blue')
+points(mean(allRT[,4]),mean(allaccuracy[,4]),pch=21,cex=2,lwd=2,bg='red')
+
+legend(50,0.82,c('Congruent','Incongruent'),pch=21,pt.bg=c('blue','red'),pt.cex=2,pt.lwd=2,box.lwd=2)
+
+dev.off()
+}
+
+```
+
+```{r makeplotExpt1EEG}
+#| include: false
+#| output: false
+#| warning: false
+
+if (processdata>0){
+  
+load('local/Exp1Group.RData')
+
+plotlims <- c(-200,1000,0,1)  
+ticklocsx <- seq(-200,1000,200)    # locations of tick marks on x axis
+ticklocsy <- seq(0,1,0.5)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+postscript("decoding1.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4, width = 7)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   # create an empty axis of the correct dimensions
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+lines(c(-200,1000),c(0.5,0.5),lty=2)
+lines(c(0,0),c(0,1),lty=3)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=rgb(0,0,0,alpha=0.2), border=NA)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=flatalpha('blue',0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=rgb(0,0.5,0,alpha=0.2), border=NA)
+
+# lines(meandecoding$Time,meandecoding$TargetB,col='black')
+lines(meandecoding$Time,meandecoding$Cue,col='blue',lwd=3)
+# lines(meandecoding$Time,meandecoding$TargetU,col='red')
+# lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen')
+
+legend(675,0.325,'Cue side',lwd=3,col='blue',box.lwd=3)
+
+dev.off()
+
+
+
+postscript("decoding2.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4, width = 7)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   # create an empty axis of the correct dimensions
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+lines(c(-200,1000),c(0.5,0.5),lty=2)
+lines(c(0,0),c(0,1),lty=3)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=flatalpha('black',0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=rgb(0,0,1,alpha=0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=flatalpha('darkgreen',0.2), border=NA)
+
+lines(meandecoding$Time,meandecoding$TargetB,col='black',lwd=3)
+# lines(meandecoding$Time,meandecoding$Cue,col='blue')
+# lines(meandecoding$Time,meandecoding$TargetU,col='red')
+lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen',lwd=3)
+
+legend(525,0.375,c('Target side','Target congruency'),lwd=3,col=c('black','darkgreen'),box.lwd=3)
+
+dev.off()
+
+plotlims <- c(-200,1000,-4,4)  
+ticklocsx <- seq(-200,1000,200)    # locations of tick marks on x axis
+ticklocsy <- seq(-4,4,2)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+postscript("ERP1.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(600,1000,1000,600),c(-4,-4,4,4),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-4,4),lty=3)
+
+for (s in 1:ncol(meancueleft)){
+lines(meandecoding$Time,meancueleft[,s],col='black')}
+
+text(1000,3.3,'Cue left',cex=1.5,pos=2)
+
+dev.off()
+
+postscript("ERP2.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(600,1000,1000,600),c(-4,-4,4,4),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-4,4),lty=3)
+
+for (s in 1:ncol(meancueright)){
+lines(meandecoding$Time,meancueright[,s],col='black')}
+
+text(1000,3.3,'Cue right',cex=1.5,pos=2)
+
+dev.off()
+
+
+postscript("ERP3.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plotlims <- c(-200,1000,-8,8)  
+ticklocsy <- seq(-8,8,4)    # locations of tick marks on y axis
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(120,160,160,120),c(-8,-8,8,8),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-8,8),lty=3)
+
+for (s in 1:ncol(meantargetleft)){
+lines(meandecoding$Time,meantargetleft[,s],col='black')}
+
+text(1000,7,'Target left',cex=1.5,pos=2)
+
+dev.off()
+
+postscript("ERP4.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(120,160,160,120),c(-8,-8,8,8),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-8,8),lty=3)
+
+for (s in 1:ncol(meantargetright)){
+lines(meandecoding$Time,meantargetright[,s],col='black')}
+
+text(1000,7,'Target right',cex=1.5,pos=2)
+
+dev.off()
+
+
+
+xpos <- 1:62
+ypos <- 1:62
+for (ch in 1:62){
+  i <- match(toupper(mnechans[ch]),chandata$Electrode)
+  xpos[ch] <- chandata$X_position[i]
+  ypos[ch] <- chandata$Y_position[i]
+}
+
+ramp2 <- colorRamp(c("darkblue","red"))  # create a ramp from one colour to another
+colmatrix2 <- rgb(ramp2(seq(0, 1, length = 101)), max = 255)
+
+## Create data frame to be used for interpolation - the function needs columns labelled x, y, and z
+rmax <- 0.55   #specify a maximum boundary for the grid
+gridRes <- 100 #specify the interpolation grid resolution
+
+toplot <- colMeans(meancueleft[801:1200,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+tiff("head1.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+toplot <- colMeans(meancueright[801:1200,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+tiff("head2.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+
+toplot <- colMeans(meantargetleft[321:360,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+zo2[which(zo2 > 3)] <- 3
+zo2[which(zo2 < -3)] <- -3
+
+tiff("head3.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+toplot <- colMeans(meantargetright[321:360,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+zo2[which(zo2 > 3)] <- 3
+zo2[which(zo2 < -3)] <- -3
+
+tiff("head4.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+  PostScriptTrace('decoding1.ps')
+  p1 <- readPicture('decoding1.ps.xml')
+  PostScriptTrace('decoding2.ps')
+  p2 <- readPicture('decoding2.ps.xml')
+  PostScriptTrace('ERP1.ps')
+  p3 <- readPicture('ERP1.ps.xml')
+  PostScriptTrace('ERP2.ps')
+  p4 <- readPicture('ERP2.ps.xml')
+  PostScriptTrace('ERP3.ps')
+  p5 <- readPicture('ERP3.ps.xml')
+  PostScriptTrace('ERP4.ps')
+  p6 <- readPicture('ERP4.ps.xml')
+  
+  h1 <- readTIFF('head1.tiff')
+  h2 <- readTIFF('head2.tiff')
+  h3 <- readTIFF('head3.tiff')
+  h4 <- readTIFF('head4.tiff')
+
+    pdf(paste0(figdir,"Exp1summary.pdf"), bg="transparent", height = 10, width = 15)
+  par(mar=c(0.1,0.1,0.1,0.1))
+  plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=c(0,1), ylim=c(0,1))
+  
+  # insert the head plots first so the white border doesn't overlap the other graphs
+  aspratio <- 10/15  # this is the aspect ratio of the output pdf
+  imwidth <- 0.25
+  xstart <- 0.34
+  ystart <- 0.34
+  rasterImage(h1,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  ystart <- 0.01
+  rasterImage(h2,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  xstart <- 0.87
+  ystart <- 0.34
+  rasterImage(h3,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  ystart <- 0.01
+  rasterImage(h4,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+
+    grid.picture(p1,x=0.25,y=0.78,width=0.5,height=1)
+    grid.picture(p2,x=0.75,y=0.78,width=0.5,height=1)
+    grid.picture(p3,x=0.2,y=0.45,width=0.35,height=1)
+    grid.picture(p4,x=0.2,y=0.15,width=0.35,height=1)
+    grid.picture(p5,x=0.7,y=0.45,width=0.35,height=1)
+    grid.picture(p6,x=0.7,y=0.15,width=0.35,height=1)
+
+    text(0.0,1,'(a)',cex=3,adj=0.5)
+    text(0.53,1,'(d)',cex=3,adj=0.5)
+    text(0.0,0.6,'(b)',cex=3,adj=0.5)
+    text(0.53,0.6,'(e)',cex=3,adj=0.5)
+    text(0.0,0.28,'(c)',cex=3,adj=0.5)
+    text(0.53,0.28,'(f)',cex=3,adj=0.5)
+    
+      dev.off()
+  
+  file.remove(c('decoding1.ps','decoding2.ps','ERP1.ps','ERP2.ps','ERP3.ps','ERP4.ps','head1.tiff','head2.tiff','head3.tiff','head4.tiff'))
+
+  file.remove(c('decoding1.ps.xml','decoding2.ps.xml','ERP1.ps.xml','ERP2.ps.xml','ERP3.ps.xml','ERP4.ps.xml'))
+
+}
+
+```
+ 
+```{r makeplotExpt2EEG}
+#| include: false
+#| output: false
+#| warning: false
+
+if (processdata>0){
+  
+load('local/Exp2Group.RData')
+
+plotlims <- c(-200,1000,0,1)  
+ticklocsx <- seq(-200,1000,200)    # locations of tick marks on x axis
+ticklocsy <- seq(0,1,0.5)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+postscript("decoding1.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4, width = 7)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   # create an empty axis of the correct dimensions
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+lines(c(-200,1000),c(0.5,0.5),lty=2)
+lines(c(0,0),c(0,1),lty=3)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=rgb(0,0,0,alpha=0.2), border=NA)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=flatalpha('blue',0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=rgb(0,0.5,0,alpha=0.2), border=NA)
+
+# lines(meandecoding$Time,meandecoding$TargetB,col='black')
+lines(meandecoding$Time,meandecoding$Cue,col='blue',lwd=3)
+# lines(meandecoding$Time,meandecoding$TargetU,col='red')
+# lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen')
+
+legend(675,0.325,'Cue side',lwd=3,col='blue',box.lwd=3)
+
+dev.off()
+
+
+
+postscript("decoding2.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4, width = 7)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   # create an empty axis of the correct dimensions
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+lines(c(-200,1000),c(0.5,0.5),lty=2)
+lines(c(0,0),c(0,1),lty=3)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=flatalpha('black',0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=rgb(0,0,1,alpha=0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=flatalpha('darkgreen',0.2), border=NA)
+
+lines(meandecoding$Time,meandecoding$TargetB,col='black',lwd=3)
+# lines(meandecoding$Time,meandecoding$Cue,col='blue')
+# lines(meandecoding$Time,meandecoding$TargetU,col='red')
+lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen',lwd=3)
+
+legend(525,0.375,c('Target side','Target congruency'),lwd=3,col=c('black','darkgreen'),box.lwd=3)
+
+dev.off()
+
+plotlims <- c(-200,1000,-4,4)  
+ticklocsx <- seq(-200,1000,200)    # locations of tick marks on x axis
+ticklocsy <- seq(-4,4,2)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+postscript("ERP1.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(600,1000,1000,600),c(-4,-4,4,4),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-4,4),lty=3)
+
+for (s in 1:ncol(meancueleft)){
+lines(meandecoding$Time,meancueleft[,s],col='black')}
+
+text(1000,3.3,'Cue left',cex=1.5,pos=2)
+
+dev.off()
+
+postscript("ERP2.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(600,1000,1000,600),c(-4,-4,4,4),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-4,4),lty=3)
+
+for (s in 1:ncol(meancueright)){
+lines(meandecoding$Time,meancueright[,s],col='black')}
+
+text(1000,3.3,'Cue right',cex=1.5,pos=2)
+
+dev.off()
+
+
+postscript("ERP3.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plotlims <- c(-200,1000,-8,8)  
+ticklocsy <- seq(-8,8,4)    # locations of tick marks on y axis
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(120,160,160,120),c(-8,-8,8,8),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-8,8),lty=3)
+
+for (s in 1:ncol(meantargetleft)){
+lines(meandecoding$Time,meantargetleft[,s],col='black')}
+
+text(1000,7,'Target left',cex=1.5,pos=2)
+
+dev.off()
+
+postscript("ERP4.ps", horizontal = FALSE, onefile = FALSE, paper = "special", height = 4.5, width = 8)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Amplitude (µV)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+polygon(c(120,160,160,120),c(-8,-8,8,8),border=NA,col='grey90')
+
+lines(c(-200,1000),c(0,0),lty=2)
+lines(c(0,0),c(-8,8),lty=3)
+
+for (s in 1:ncol(meantargetright)){
+lines(meandecoding$Time,meantargetright[,s],col='black')}
+
+text(1000,7,'Target right',cex=1.5,pos=2)
+
+dev.off()
+
+
+
+xpos <- 1:62
+ypos <- 1:62
+for (ch in 1:62){
+  i <- match(toupper(mnechans[ch]),chandata$Electrode)
+  xpos[ch] <- chandata$X_position[i]
+  ypos[ch] <- chandata$Y_position[i]
+}
+
+ramp2 <- colorRamp(c("darkblue","red"))  # create a ramp from one colour to another
+colmatrix2 <- rgb(ramp2(seq(0, 1, length = 101)), max = 255)
+
+## Create data frame to be used for interpolation - the function needs columns labelled x, y, and z
+rmax <- 0.55   #specify a maximum boundary for the grid
+gridRes <- 100 #specify the interpolation grid resolution
+
+toplot <- colMeans(meancueleft[801:1200,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+tiff("head1.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+toplot <- colMeans(meancueright[801:1200,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+tiff("head2.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+
+toplot <- colMeans(meantargetleft[321:360,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+zo2[which(zo2 > 3)] <- 3
+zo2[which(zo2 < -3)] <- -3
+
+tiff("head3.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+toplot <- colMeans(meantargetright[321:360,])
+toplot[which(is.na(toplot))] <- 0
+testDat<- data.frame(x = xpos, y = -ypos, z = toplot)
+
+#Create the interpolation grid
+xo <- seq(min(-rmax, testDat$x), max(rmax, testDat$x), length = gridRes)
+yo <- seq(max(rmax, testDat$y), min(-rmax, testDat$y), length = gridRes)
+
+interpV4 <- v4Interp(testDat, xo, yo, rmax, gridRes)
+
+zo2 <- as.matrix(interpV4[,2:ncol(interpV4)])
+
+xo2 <- matrix(rep(xo,length(yo)),nrow = length(xo),ncol = length(yo))
+yo2 <- t(matrix(rep(yo,length(xo)),nrow = length(yo),ncol = length(xo)))
+outsidecircle <- sqrt(xo2^2 + yo2^2) > 0.51
+zo2[outsidecircle] <- 0
+
+zo2[which(zo2 > 3)] <- 3
+zo2[which(zo2 < -3)] <- -3
+
+tiff("head4.tiff", height = 600, width = 600, units="px", bg="white")
+
+plotlims <- c(-rmax,rmax,-rmax,rmax) 
+par(pty="s")  # make axis square
+plot(x=NULL,y=NULL,ann=FALSE, axes=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])  
+image(xo,xo,zo2,col=colmatrix2,zlim=c(-3,3),add=TRUE,useRaster=TRUE)
+maskx <- c(chandata$OutlineX[1:51]*2.2,chandata$OutlineX[51:1])
+masky <- c(chandata$OutlineY[1:51]*2.2,chandata$OutlineY[51:1])
+polygon(maskx,masky,border=NA,col="white")
+maskx <- c(chandata$OutlineX[51:101]*2.2,chandata$OutlineX[101:51])
+masky <- c(chandata$OutlineY[51:101]*2.2,chandata$OutlineY[101:51])
+polygon(maskx,masky,border=NA,col="white")
+
+# blackelectrodes <- match(toupper(targetelectrodes),toupper(as.character(electrodes[3:66])))
+# points(xpos[blackelectrodes],ypos[blackelectrodes],pch=16,col="black",cex=2)
+
+lines(chandata$OutlineX,chandata$OutlineY,col="black",lwd=2)
+lines(chandata$NoseX,chandata$NoseY,col="black",lwd=2)
+lines(chandata$LearX,chandata$LearY,col="black",lwd=2)
+lines(chandata$RearX,chandata$RearY,col="black",lwd=2)
+
+dev.off()
+
+
+
+  PostScriptTrace('decoding1.ps')
+  p1 <- readPicture('decoding1.ps.xml')
+  PostScriptTrace('decoding2.ps')
+  p2 <- readPicture('decoding2.ps.xml')
+  PostScriptTrace('ERP1.ps')
+  p3 <- readPicture('ERP1.ps.xml')
+  PostScriptTrace('ERP2.ps')
+  p4 <- readPicture('ERP2.ps.xml')
+  PostScriptTrace('ERP3.ps')
+  p5 <- readPicture('ERP3.ps.xml')
+  PostScriptTrace('ERP4.ps')
+  p6 <- readPicture('ERP4.ps.xml')
+  
+  h1 <- readTIFF('head1.tiff')
+  h2 <- readTIFF('head2.tiff')
+  h3 <- readTIFF('head3.tiff')
+  h4 <- readTIFF('head4.tiff')
+
+    pdf(paste0(figdir,"Exp2summary.pdf"), bg="transparent", height = 10, width = 15)
+  par(mar=c(0.1,0.1,0.1,0.1))
+  plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=c(0,1), ylim=c(0,1))
+  
+  # insert the head plots first so the white border doesn't overlap the other graphs
+  aspratio <- 10/15  # this is the aspect ratio of the output pdf
+  imwidth <- 0.25
+  xstart <- 0.34
+  ystart <- 0.34
+  rasterImage(h1,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  ystart <- 0.01
+  rasterImage(h2,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  xstart <- 0.87
+  ystart <- 0.34
+  rasterImage(h3,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+  ystart <- 0.01
+  rasterImage(h4,xstart,ystart,xstart+imwidth*aspratio,ystart+imwidth) 
+
+    grid.picture(p1,x=0.25,y=0.78,width=0.5,height=1)
+    grid.picture(p2,x=0.75,y=0.78,width=0.5,height=1)
+    grid.picture(p3,x=0.2,y=0.45,width=0.35,height=1)
+    grid.picture(p4,x=0.2,y=0.15,width=0.35,height=1)
+    grid.picture(p5,x=0.7,y=0.45,width=0.35,height=1)
+    grid.picture(p6,x=0.7,y=0.15,width=0.35,height=1)
+
+    text(0.0,1,'(a)',cex=3,adj=0.5)
+    text(0.53,1,'(d)',cex=3,adj=0.5)
+    text(0.0,0.6,'(b)',cex=3,adj=0.5)
+    text(0.53,0.6,'(e)',cex=3,adj=0.5)
+    text(0.0,0.28,'(c)',cex=3,adj=0.5)
+    text(0.53,0.28,'(f)',cex=3,adj=0.5)
+    
+      dev.off()
+  
+  file.remove(c('decoding1.ps','decoding2.ps','ERP1.ps','ERP2.ps','ERP3.ps','ERP4.ps','head1.tiff','head2.tiff','head3.tiff','head4.tiff'))
+
+  file.remove(c('decoding1.ps.xml','decoding2.ps.xml','ERP1.ps.xml','ERP2.ps.xml','ERP3.ps.xml','ERP4.ps.xml'))
+
+  
+  plotlims <- c(-200,1000,0.5,0.7)  
+ticklocsx <- seq(-200,1000,200)    # locations of tick marks on x axis
+ticklocsy <- seq(0.5,0.7,0.1)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx        # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+pdf("decodingall.pdf", height = 4, width = 7)
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   # create an empty axis of the correct dimensions
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+
+lines(c(-200,1000),c(0.5,0.5),lty=2)
+lines(c(0,0),c(0,1),lty=3)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=rgb(0,0,0,alpha=0.2), border=NA)
+
+polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=flatalpha('blue',0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
+
+# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=rgb(0,0.5,0,alpha=0.2), border=NA)
+
+# lines(meandecoding$Time,meandecoding$TargetB,col='black')
+lines(meandecoding$Time,meandecoding$Cue,col='blue',lwd=3)
+lines(meandecoding$Time,meandecoding$CueNostim,col='red',lwd=3)
+lines(meandecoding$Time,meandecoding$CueStim,col='green',lwd=3)
+# lines(meandecoding$Time,meandecoding$TargetU,col='red')
+# lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen')
+
+legend(675,0.325,'Cue side',lwd=3,col='blue',box.lwd=3)
+
+dev.off()
+
+stimlist <- c(201,204,210,211,212,214,216,217,218,219,220,221,223,224)
+nostimlist <- c(205,206,207,208,209,215,222,225)
+
+}
+
+
+
+
+```
+   
 # Abstract
 
 
 
 # Introduction
 
+The ability to orient and control the deployment of our attention to spatial locations or features of our environment is invaluable to our ability to perform tasks, focusing on relevant stimuli and disregarding those that are unnecessary for the task at hand (Knudson, 2007; Hopfinger et al., 2000; Vohs and Baumeister, 2013). A classic technique for studying the deployment of attention in space is the Posner cueing paradigm, which demonstrates that it is possible for attention to be deployed to spatial locations independently of eye movements (Posner, 1980).
+
+Individuals with neurodevelopmental disorders such as attention deficit hyperactivity disorder (ADHD) and autism present with deficits in attention (American Psychiatric Association, 2013; Allen and Courchesne, 2001). It has been suggested that repetitive stereotypies, or ‘stimming’ behaviours, are linked to these deficits in attention- in the few studies where they have been asked, individuals who stim report that it benefits their ability to focus, and that the behaviours aid in emotional regulation (Kapp et al., 2019; Steward, 2015). It has been proposed that an improved ability to focus through stimming may have a neural basis (McCarty and Brumback, 2021). Building on these theories and research, we tested the effect of stimming on performance in a Posner cueing task.
+
+The Posner cueing paradigm (Posner, 1980) involves the participant attending to a central fixation point, then receiving a cue (which may be exogenous, where attention is captured through bottom-up processes; or endogenous, where attention is controlled by top-down processes, such as attending selectively to cues of the correct colour (Leblanc et al., 2008)) indicating that a stimulus is about to appear either to the left or the right of the fixation point (Thiery et al., 2016). The assumption underlying the task is that if participants successfully orient their attention to the cued location, then their reaction times will be shorter for valid trials (where the stimulus appears at the cued location) than for invalid trials (where the stimulus appears at the uncued location); this has been demonstrated extensively (Thiery et al., 2016). This reaction time difference was found by Posner et al. (1978, as cited in Johnson and Haggard, 2003) to be 25ms faster for valid trials and 40ms slower for invalid trials (compared to a neutral cue condition).
+
+This paradigm has been combined with EEG to investigate the neural basis of spatial attention. For example, Landau et al. (2007) investigated gamma-band activity during a Posner cueing task, comparing valid and invalid trials. Gamma range responses were associated with voluntary shifts in attention, e.g., attending to the left of the fixation point following a left-pointing arrow cue, but were absent when attention was involuntarily captured by the appearance of a stimulus in the uncued location on invalid trials; this suggests that voluntary and involuntary processes of attention deployment are controlled by separate mechanisms. Thiery et al. (2016) investigated two specific ERPs, the N2pc component (a negative response typically seen at around 200ms post stimulus, in the posterior-contralateral region) and the SPCN component (sustained posterior contralateral negativity). They used multivariate pattern analysis and used the decoder accuracy to determine that these two components were able to predict the focus of participants’ spatial attention. This was modulated by the varied distance of the stimulus from the central fixation (further being better decoded).
+
+A combined EEG and TMS study by Capotosto et al. (2012) demonstrated that the application of TMS to the right intraparietal sulcus (IPS) impairs target detection, particularly on invalid trials. They additionally noted that the P3 response’s amplitude was affected by this; on invalid trials its amplitude was significantly lower, and on valid trials it was significantly higher. The IPS has been previously identified as an important region in attentional deployment by Vossel et al. (2009) in an fMRI study identifying regions that are selectively active on valid and invalid trials. The right IPS and, additionally, the right inferior frontal gyrus were implicated in attentional processes related to both types of trial. Peelen et al. (2004) concluded that both endogenous and exogenous orienting cues involve the same network in their fMRI study, implicating frontal and parietal regions (the premotor cortex, posterior parietal cortex, medial frontal cortex, and right inferior frontal cortex). Fitzgerald et al. (2014) conducted an MRI study using the Posner cueing task and found that activation in the ventral attention network differed between individuals with autism and controls; individuals with autism also showed weaker functional connectivity in the dorsal attentional network compared to their neurotypical counterparts.
+
+A number of developmental disorders involve deficits in attention, notably ADHD and autism. In the case of ADHD, attention deficits are a defining feature of the condition (American Psychological Association, 2013). For autism, attention deficits are not an explicit part of the diagnostic criteria (although restricted interests, which are included, are somewhat related), but both attentional deficits and strengths are widely reported in autistic individuals. They are typically more distractible, demonstrating ‘underselective’ attention, but also demonstrate ‘overselective’ attention where they attend intensely to a more limited subset of stimuli. This ‘overselective’ attention has been suggested to be linked to restricted interests, which is also sometimes referred to as ‘hyperfocus’, where a task is the subject of intense focus for the individual (e.g., Dupuis et al., 2022). These differences appear to have a neural basis- they have been linked to abnormally wide sulci in the parietal lobe (Allen and Courchesne, 2001). Hyperfocus is also widely self-reported in ADHD, despite a lack of clinical research into the phenomenon (Hupfeld et al., 2019).
+
+These marked differences in attentional deployment seen in both conditions are worth considering in the framework of the transdiagnostic approach, which seeks to identify core deficiencies that result in the presentation of traits from multiple disorders, instead of approaching different disorders as entirely separate even within the same individual (Newby et al., 2015). ADHD is the most common comorbidity of autism, and even without a dual diagnosis, 30-80% of individuals with autism present symptoms of ADHD, and 20-60% of children with ADHD exhibit autism-like traits (Zhang et al., 2022). Some shared deficiencies that have already been identified in the case of autism and ADHD include fine motor function and verbal fluency, alongside some structural differences in the brain (Zhang et al., 2022).
+
+Stimming behaviours are commonly seen in individuals with diagnoses of autism and/or ADHD, and involve repetitive movements, typically featuring the arms, hands, or entire body (Chadehumbe, 2018), for example hand flapping (Kapp et al., 2019). They are also observed in neurotypical individuals, but at much lower rates than in neurodiverse individuals (Chadehumbe, 2018). The behaviours are typically defined as involuntary, but pleasant (Chadehumbe; Kapp et al.; Steward, 2015), and are associated with emotional states such as stress, boredom, concentration, or excitement (Mackenzie, 2018). They are often defined as purposeless (e.g., Tan et al., 1997) but self-reports from individuals with autism claim that stimming aids the regulation of their emotions (Kapp et al. 2019; Steward, 2015).
+
+A type of vocal stimming called echolalia has been consistently demonstrated to have benefits for autistic children in the acquisition of language (Charlop, 1983; Pruccoli et al., 2021). This is one of the few instances that stimming has been researched in terms of its potential function. Echolalic utterances, which typically involve repeating words spoken by another, have also been identified as having predominantly communicative functions (Prizant and Duchan, 1981). This opens up an avenue to research into potential benefits that other types of stimming may provide.
+
+Current research into stimming places a large focus on designing interventions to eliminate the behaviours, for example the use of weighted vests (Fertel-Daly et al., 2001). Taking this approach without first attempting to understand if there are benefits to the behaviour seems ill-advised. McCarty and Brumback (2021), for example, proposed based on self-reports of the benefits of stimming (focus, coping with overwhelming sensory input, and relaxation) that regular motor movements may generate (or be a by-product of) rhythmic oscillations in the motor cortex, which entrain oscillations in the sensory cortex. This entrainment might improve information transfer in the sensory cortex, effectively normalising the atypical motor and sensory oscillations observed in the brains of autistic individuals both during activity (Milne et al., 2009; Snijders et al., 2013; Murphy and Benítez-Burraco, 2017; as cited in McCarty and Brumback) and at rest (Wang et al., 2013; Berman et al., 2015; as cited in McCarty and Brumback).
+
+There is heavy stigma around stimming behaviours, with many individuals reporting they have been explicitly instructed not to stim, despite attempts at repression causing them some discomfort (Steward, 2015). Individuals with autism state that they believe stimming should not be stigmatised in this way, and that they should be allowed to act in the way that feels natural to them (Kapp et al., 2019). Research into potential benefits of stimming is important as a step towards dispelling this stigma, and discouraging interventions that aim to eliminate the behaviour.
+
+This study involved two experiments. In the first experiment, participants completed a Posner cueing task while EEG recordings were taken; a pattern classifier then attempted to differentiate, using the participants’ brain activity, whether they attended to the left vs. to the right following the cue onset. This is similar to the methodology used by Thiery et al. (2016): by measuring the timecourse of classifier accuracy, we are provided with an index of the deployment of spatial attention.
+
+The second study extended this paradigm by adding the variable of stimming. The accuracy of the classifier was compared based on whether the participants were permitted to stim during the trials, or whether they were instructed to keep still. In this case, we used decoding accuracy to assess whether stimming provided a benefit in terms of the deployment of spatial attention; if there was a benefit, the classifier accuracy would be higher, as the EEG signal would be more strongly different between conditions due to the greater focus of attention in different spatial locations. For the purposes of our analyses, due to an insufficiently sized and heterogeneous clinical group, we grouped the participants based on whether or not they reported stimming in their everyday lives; as discussed previously, neurotypicals often engage in stimming (Chadehumbe, 2018). 64% of the participants had reported in the pre-experiment questionnaire that they typically engaged in stimming.
+
 
 # Methods
 
 
 # Results
+
+There was a highly significant effect of cue congruency on both accuracy (*t* = `r round(ACCtest$statistic,digits=2)`, *p* `r p_format(ACCtest$p.value,digits=3,accuracy=0.001)`, *d* = `r round(ACCd,digits=2)`) and reaction time (*t* = `r round(RTtest$statistic,digits=2)`, *p* `r p_format(RTtest$p.value,digits=3,accuracy=0.001)`, *d* = `r round(RTd,digits=2)`), as shown in @fig-Expt1resps. Responses to targets in the cued location were both faster ($M_{diff}$ = `r round(RTdiff)` ms) and more accurate ($M_{diff}$ = `r round(accdiff)`\%) than for those in the uncued location.
+
+```{r plotExpt1resps}
+#| include: true
+#| output: true
+#| label: fig-Expt1resps
+#| out.width: '60%'
+#| fig.cap: 'Summary of reaction time and accuracy data for the cueing task in Experiment 1. Small points show data for individual participants (N = 39), and larger points give the group means. Error bars indicate 95% confidence intervals.'
+
+knitr::include_graphics(paste0(figdir,'Exp1resps.pdf'))
+
+```
+
+```{r plotExpt1EEG}
+#| include: true
+#| output: true
+#| label: fig-Expt1EEG
+#| fig.cap: 'Summary of EEG data from Experiment 1. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset). ERPs and scalp topographies are shown for cues pointing left (b) and right (c), with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Panel (d) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset). ERPs and scalp topographies are shown for targets on the left (e) and right (f) side of fixation, with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Shaded regions in panels (a,d) indicate 95% confidence intervals.'
+
+knitr::include_graphics(paste0(figdir,'Exp1summary.pdf'))
+
+```
+
+
+For accuracy, there was no effect of cue congruency (*F* = `r round(accAOVresults$ANOVA[2,4],digits=2)`, *p* = `r p_format(accAOVresults$ANOVA[2,5],digits=3,accuracy=0.001)`, $\eta^2_G$ = `r round(accAOVresults$ANOVA[2,7],digits=2)`), stimming condition (*F* = `r round(accAOVresults$ANOVA[1,4],digits=2)`, *p* = `r p_format(accAOVresults$ANOVA[1,5],digits=3,accuracy=0.001)`, $\eta^2_G$ = `r round(accAOVresults$ANOVA[1,7],digits=2)`), nor an interaction between the two (*F* = `r round(accAOVresults$ANOVA[3,4],digits=2)`, *p* = `r p_format(accAOVresults$ANOVA[3,5],digits=3,accuracy=0.001)`, $\eta^2_G$ = `r round(accAOVresults$ANOVA[3,7],digits=2)`). For reaction time, there were significant effects of cue congruency (*F* = `r round(RTAOVresults$ANOVA[2,4],digits=2)`, *p* `r p_format(RTAOVresults$ANOVA[2,5],digits=3,accuracy=0.001)`, $\eta^2_G$ = `r round(RTAOVresults$ANOVA[2,7],digits=2)`) and stimming condition (*F* = `r round(RTAOVresults$ANOVA[1,4],digits=2)`, *p* = `r p_format(RTAOVresults$ANOVA[1,5],digits=1,accuracy=0.001)`, $\eta^2_G$ = `r round(RTAOVresults$ANOVA[1,7],digits=2)`), as well as an interaction between the two (*F* = `r round(RTAOVresults$ANOVA[3,4],digits=2)`, *p* = `r p_format(RTAOVresults$ANOVA[3,5],digits=1,accuracy=0.001)`, $\eta^2_G$ = `r round(RTAOVresults$ANOVA[3,7],digits=2)`).
+
+```{r plotExpt2resps}
+#| include: true
+#| output: true
+#| label: fig-Expt2resps
+#| out.width: '95%'
+#| fig.cap: 'Summary of reaction time and accuracy data for the cueing task in Experiment 2. Small points show data for individual participants (N = 39), and larger points give the group means. Error bars indicate 95% confidence intervals.'
+
+knitr::include_graphics(paste0(figdir,'Exp2resps.pdf'))
+
+```
+
+```{r plotExpt2EEG}
+#| include: true
+#| output: true
+#| label: fig-Expt2EEG
+#| fig.cap: 'Summary of EEG data from Experiment 2. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset). ERPs and scalp topographies are shown for cues pointing left (b) and right (c), with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Panel (d) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset). ERPs and scalp topographies are shown for targets on the left (e) and right (f) side of fixation, with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Shaded regions in panels (a,d) indicate 95% confidence intervals.'
+
+knitr::include_graphics(paste0(figdir,'Exp2summary.pdf'))
+
+```
 
 
 # Discussion
