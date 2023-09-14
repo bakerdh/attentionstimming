@@ -28,12 +28,14 @@ toinstall <- packagelist[which(!packagelist %in% (.packages()))]
 invisible(lapply(toinstall,library,character.only=TRUE))
 
 # create python environment and install packages
+if (processedata==2){
 if (!dir.exists('env')){
   system('python3 -m venv env')
   system('source env/bin/activate')
   system('python3 -m pip install mne numpy scikit-learn matplotlib pandas')
 }
 use_virtualenv('env/')
+}
 
 if (!dir.exists('local/processedE1')){dir.create('local/processedE1')}
 if (!dir.exists('local/processedE2')){dir.create('local/processedE2')}
