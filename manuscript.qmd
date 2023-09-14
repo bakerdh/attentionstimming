@@ -14,6 +14,11 @@ format: pdf
 #| warning: false
 
 processdata <- 0
+# the processdata flag has three levels:
+# 0 - just produce the manuscript with minimal analysis, using existing figures
+# 1 - do group-level analysis using pre-computed MVPA and ERPs (requires 200MB)
+# 2 - do all analyses from scratch using the raw data (requires ~35GB)
+
 
 # install R packages
 packagelist <- c('knitr','reticulate','osfr','bookdown','grImport','tiff','rstatix','ez') 
@@ -28,7 +33,6 @@ if (!dir.exists('env')){
   system('source env/bin/activate')
   system('python3 -m pip install mne numpy scikit-learn matplotlib pandas')
 }
-
 use_virtualenv('env/')
 
 if (!dir.exists('local/processedE1')){dir.create('local/processedE1')}
@@ -84,15 +88,76 @@ v4Interp <- function(df, xo, yo, rmax = .75, gridRes = 67) {
   names(outDf)[1:length(yo[1,])+1] <- yo[1,]
   return(outDf)}
 
+# check for local files and directories and create/download if missing
+if (!dir.exists('local')){dir.create('local')}
+figdir <- 'Figures/'
+if (!dir.exists(figdir)){dir.create(figdir)}
 
-mnechans <- read.csv('local/MNEchannels.csv')
-mnechans <- mnechans[c(1:12,14:18,20:64),1]  # exclude the mastoids
+if (processdata>0){
+if (!file.exists('local/MNEchannels.csv')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('MNEchannels.csv',osffiles$name)
+osf_download(osffiles[fid,],path='local/')
+}
+if (!file.exists('local/channeldata.csv')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('channeldata.csv',osffiles$name)
+osf_download(osffiles[fid,],path='local/')
+}
 
 chandata <- read.csv('local/channeldata.csv')
-
+mnechans <- read.csv('local/MNEchannels.csv')
+mnechans <- mnechans[c(1:12,14:18,20:64),1]  # exclude the mastoids
 electrodeindices <- match(toupper(mnechans),chandata$Electrode)
+}
 
-figdir <- 'Figures/'
+if (processdata<2){
+  # download processed data if missing
+  if (!file.exists('local/Expt1resps.RData')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('Expt1resps.RData',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+  if (!file.exists('local/Expt2resps.RData')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('Expt2resps.RData',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+  if (!file.exists('local/Exp1Group.RData')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('Exp1Group.RData',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+    if (!file.exists('local/Exp2Group.RData')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('Exp2Group.RData',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+}
+
+if (processdata==2){
+  # check for presence of raw data and download if missing
+  if (!dir.exists('local/rawdata')){dir.create('local/rawdata')}
+  d <- dir('local/rawdata/',pattern='S')
+  if (length(d)<126){
+    osfproject <- osf_retrieve_node("yhsmb")
+    osffiles <- osf_ls_files(osfproject,n_max=300)
+    for (n in 1:nrow(osffiles)){
+      if (!pmatch(osffiles[n,]$name,d,nomatch=0)){
+        osf_download(osffiles[n,],path='local/rawdata/',progress=TRUE)
+      }
+    }
+    osfproject <- osf_retrieve_node("dhkcg")
+    osffiles <- osf_ls_files(osfproject,n_max=300)
+    for (n in 1:nrow(osffiles)){
+      if (!pmatch(osffiles[n,]$name,d,nomatch=0)){
+        osf_download(osffiles[n,],path='local/rawdata/',progress=TRUE)
+      }
+    }    
+  }
+}
 
 ```
 
@@ -141,7 +206,7 @@ if r.processdata==2:
   sublist = list(range(501,506)) + list(range(508,542))
   
   for subj in range(0,len(sublist)):
-    filename = "local/preprocessed/S" + str(sublist[subj]) + ".set"
+    filename = "local/rawdata/S" + str(sublist[subj]) + ".set"
     raw = mne.io.read_raw_eeglab(filename,preload=True)
     raw.drop_channels(["HEOG", "VEOG", "M1", "M2"])
     raw.set_montage(ANT_montage)
@@ -349,7 +414,7 @@ if r.processdata==2:
   sublist = list(range(201,202)) + list(range(204,213)) + list(range(214,226))
 
   for subj in range(0,len(sublist)):
-    filename = "local/preprocessed/S" + str(sublist[subj]) + ".set"
+    filename = "local/rawdata/S" + str(sublist[subj]) + ".set"
     
     raw = mne.io.read_raw_eeglab(filename,preload=True)
     raw.drop_channels(["HEOG", "VEOG", "M1", "M2"])
