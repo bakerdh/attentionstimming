@@ -1380,7 +1380,7 @@ mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Reaction time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
 title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
-title(main="No stimming", cex.main=1.5)
+title(main="No stimming condition", cex.main=1.5)
 
 coltrans1=rgb(0,0,1,alpha=0.2)
 coltrans2=rgb(1,0,0,alpha=0.2)
@@ -1426,7 +1426,7 @@ mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Reaction time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
 title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
-title(main="Stimming", cex.main=1.5)
+title(main="Stimming condition", cex.main=1.5)
 
 coltrans1=rgb(0,0,1,alpha=0.2)
 coltrans2=rgb(1,0,0,alpha=0.2)
@@ -1491,23 +1491,14 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
 lines(c(0,0),c(0,1),lty=3)
 
-# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=rgb(0,0,0,alpha=0.2), border=NA)
-
 polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=flatalpha('blue',0.2), border=NA)
 
-# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
-
-# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=rgb(0,0.5,0,alpha=0.2), border=NA)
-
-# lines(meandecoding$Time,meandecoding$TargetB,col='black')
 lines(meandecoding$Time,meandecoding$Cue,col='blue',lwd=3)
-# lines(meandecoding$Time,meandecoding$TargetU,col='red')
-# lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen')
 
 i <- which(decodingBFs[,1]>3)
 lines(meandecoding$Time[i],1.05+(0*i),lwd=3,col='yellow')
@@ -1530,22 +1521,16 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
 lines(c(0,0),c(0,1),lty=3)
 
 polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=flatalpha('black',0.2), border=NA)
 
-# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=rgb(0,0,1,alpha=0.2), border=NA)
-
-# polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetU+CIdecoding$TargetU, meandecoding$TargetU[1201:1]-CIdecoding$TargetU[1201:1]), col=rgb(1,0,0,alpha=0.2), border=NA)
-
 polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$CongIncong+CIdecoding$CongIncong, meandecoding$CongIncong[1201:1]-CIdecoding$CongIncong[1201:1]), col=flatalpha('darkgreen',0.2), border=NA)
 
 lines(meandecoding$Time,meandecoding$TargetB,col='black',lwd=3)
-# lines(meandecoding$Time,meandecoding$Cue,col='blue')
-# lines(meandecoding$Time,meandecoding$TargetU,col='red')
 lines(meandecoding$Time,meandecoding$CongIncong,col='darkgreen',lwd=3)
 
 i <- which(decodingBFs[,3]>3)
@@ -1951,7 +1936,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(a) Cue side (all participants)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -1978,7 +1963,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(b) Target side (all participants)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -2015,7 +2000,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(c) Cue side (group comparison)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -2044,7 +2029,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(d) Cue congruency (group comparison)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -2073,7 +2058,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(e) Cue side (stimming group)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -2102,7 +2087,7 @@ axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
 mtext(text = ticklabelsx, side = 1, at=ticklocsx, line=0.5)     # add the tick labels
 mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
 title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)   
-title(ylab="Proportion correct", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
+title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=2, cex.lab=1.5)
 title(main='(f) Cue side (non-stimming group)',cex.main=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
@@ -2247,7 +2232,7 @@ We next explored the EEG data in response to both the cue presentation and the t
 #| include: true
 #| output: true
 #| label: fig-Expt1EEG
-#| fig.cap: 'Summary of EEG data from Experiment 1. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset). ERPs and scalp topographies are shown for cues pointing left (b) and right (c), with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Panel (d) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset). ERPs and scalp topographies are shown for targets on the left (e) and right (f) side of fixation, with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Shaded regions in panels (a,d) indicate 95% confidence intervals.'
+#| fig.cap: 'Summary of EEG data from Experiment 1. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset). ERPs and scalp topographies are shown for cues pointing left (b) and right (c), with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Panel (d) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset). ERPs and scalp topographies are shown for targets on the left (e) and right (f) side of fixation, with the shaded regions indicating the time period over which voltages were averaged to generate the scalp plots. Shaded regions in panels (a,d) indicate 95% confidence intervals, and lines above y=1 indicate Bayes factor scores above 3 (yellow >3; orange >10; red >30).'
 
 knitr::include_graphics(paste0(figdir,'Exp1summary.pdf'))
 
@@ -2268,11 +2253,13 @@ knitr::include_graphics(paste0(figdir,'Exp2resps.pdf'))
 
 ```
 
+The EEG results from Experiment 2 are summarised in @fig-Expt2EEG. Panels (a,b) demonstrate that multivariate pattern analysis is able to decode cue direction, target side, and target congruency with similar timecourses to Experiment 1 (see @fig-Expt1EEG), though with somewhat lower accuracy overall. We then compared decoding accuracy for cue side and cue congruency between the stimming group (N=14), and the non-stimming group (N=8). Although decoding accuracy appeared to be slightly higher for the no stimming group for cue side ([@fig-Expt2EEG]c), this difference was not convincing. Accuracy for cue congruency was very similar for the two groups ([@fig-Expt2EEG]d). Finally, we compared the deployment of spatial attention between stimming and non-stimming conditions for each of the two groups. There appeared to be a slight decrease in decoding accuracy in the non-stimming group when they were asked to stim ([@fig-Expt2EEG]f), but no differences in the stimming group ([@fig-Expt2EEG]e).
+
 ```{r plotExpt2EEG}
 #| include: true
 #| output: true
 #| label: fig-Expt2EEG
-#| fig.cap: 'Summary of EEG data from Experiment 2. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset) for the full sample of participants (N=22). Panel (b) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset), again for all participants. Panels (c,d) compare decoding between the stimming (N=14) and non-stimming (N=8) participants for cue side and cue congruency. Panels (e,f) compare decoding accuracy for cue side within each group, and between the stimming and no stimming conditions. Shaded regions in all panels indicate 95% confidence intervals.'
+#| fig.cap: 'Summary of EEG data from Experiment 2. Panel (a) shows decoding accuracy of a pattern classification algorithm trained on responses to the cue stimulus (Time 0 is the cue onset) for the full sample of participants (N=22). Panel (b) shows decoding accuracy for classifying target location (black curve) or cue congruency (green curve) in response to the target (Time 0 is the target onset), again for all participants. Panels (c,d) compare decoding between the stimming (N=14) and non-stimming (N=8) participants for cue side and cue congruency. Panels (e,f) compare decoding accuracy for cue side within each group, and between the stimming and no stimming conditions. Shaded regions in all panels indicate 95% confidence intervals, and lines above y=1 indicate Bayes factor scores above 3 (yellow >3; orange >10; red >30).'
 
 knitr::include_graphics(paste0(figdir,'Exp2summary.pdf'))
 
