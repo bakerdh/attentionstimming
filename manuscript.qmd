@@ -21,7 +21,7 @@ processdata <- 0
 
 
 # install R packages
-packagelist <- c('knitr','reticulate','osfr','bookdown','grImport','tiff','rstatix','ez','readr','BayesFactor','bmp','pracma')
+packagelist <- c('knitr','reticulate','osfr','bookdown','grImport','tiff','rstatix','ez','readr','BayesFactor','bmp','pracma','eyelinker')
 
 missingpackages <- packagelist[!packagelist %in% installed.packages()[,1]]
 if (length(missingpackages)>0){install.packages(missingpackages)}
@@ -1210,6 +1210,169 @@ RTAOVBFnoSTIM <- anovaBF(RT ~ stimcond * congruent + participant, data=RTaovNOST
 
 ```
 
+```{r analyseeyetracking}
+#| warning: false
+
+if (processdata==2){
+
+  cuetriggerlist <- c('Trial101_onset','Trial102_onset')
+  
+  d <- dir('local/Experiment2/')
+  eyetracksubcount <- 0
+  
+  eyetracksubIDs <- NULL
+  allcuetrials <- array(0,dim=c(16,800))
+  alllefttrials <- array(0,dim=c(16,400))
+  allrighttrials <- array(0,dim=c(16,400))
+   
+  for (s in 1:length(d)){
+    
+    d2 <- dir(paste0('local/Experiment2/',d[s]),pattern='*.asc')
+    
+    if (length(d2)>0){
+      eyetracksubcount <- eyetracksubcount + 1
+      eyetracksubIDs[eyetracksubcount] <- d[s]
+      
+      cuecounter <- 0
+      leftcuecounter <- 0
+      rightcuecounter <- 0
+      allxposcue <- NULL
+      allxposleft <- NULL
+      allxposright <- NULL
+      for (rep in 1:length(d2)){
+        dat <- read.asc(paste0('local/Experiment2/',d[s],'/',d2[rep]))
+        
+        triggers <- dat$msg$text
+        triggertimes <- dat$msg$time
+        
+        cueindices <- which(!is.na(match(triggers,cuetriggerlist)))
+        cuetimes <- triggertimes[cueindices]
+        for (trial in 1:length(cuetimes)){
+          i <- match(cuetimes[trial],dat$raw$time)
+          xpos <- dat$raw$xp[i]
+          cuecounter <- cuecounter + 1
+          allxposcue[cuecounter] <- xpos
+        }
+        
+        
+        leftcuedindices <- which(!is.na(match(triggers,cuetriggerlist[1]))) + 2
+        leftcuedtargettimes <- triggertimes[leftcuedindices]
+        for (trial in 1:length(leftcuedtargettimes)){
+          i <- match(leftcuedtargettimes[trial],dat$raw$time)
+          xpos <- dat$raw$xp[i]
+          leftcuecounter <- leftcuecounter + 1
+          allxposleft[leftcuecounter] <- xpos
+        }
+        
+         rightcuedindices <- which(!is.na(match(triggers,cuetriggerlist[2]))) + 2
+        rightcuedtargettimes <- triggertimes[rightcuedindices]
+        for (trial in 1:length(rightcuedtargettimes)){
+          i <- match(rightcuedtargettimes[trial],dat$raw$time)
+          xpos <- dat$raw$xp[i]
+          rightcuecounter <- rightcuecounter + 1
+          allxposright[rightcuecounter] <- xpos
+        }       
+        
+      }
+      
+      allcuetrials[eyetracksubcount,1:cuecounter] <- allxposcue
+      alllefttrials[eyetracksubcount,1:leftcuecounter] <- allxposleft
+      allrighttrials[eyetracksubcount,1:rightcuecounter] <- allxposright
+      
+    }
+  }
+  
+  save(file='local/eyepositions.RData',list=c('allcuetrials','alllefttrials','allrighttrials','eyetracksubIDs'))
+  
+}
+
+```
+  
+```{r ploteyetracking}
+#| warning: false
+
+load('local/eyepositions.RData')
+meanpos <- matrix(0,nrow=16,ncol=2)
+
+for (s in 1:16){
+temp <- alllefttrials[s,]
+temp <- temp[which(!is.na(temp))]
+temp <- temp[temp>0]
+temp <- (temp-960)/36   # rescale to degrees
+meanpos[s,1] <- mean(temp)
+
+temp <- allrighttrials[s,]
+temp <- temp[which(!is.na(temp))]
+temp <- temp[temp>0]
+temp <- (temp-960)/36   # rescale to degrees
+meanpos[s,2] <- mean(temp)
+}
+
+eyetracktest <- t.test(meanpos[,1],meanpos[,2],paired=TRUE)
+eyetrackBF <- ttestBF(meanpos[,1],meanpos[,2],paired=TRUE)
+
+if (processdata>0){
+
+pdf(paste0(figdir,"eyepositions.pdf"), bg="transparent", height = 10, width = 7)
+
+plotlims <- c(-15,15,0,16)  
+ticklocsx <- seq(-15,15,5)    # locations of tick marks on x axis
+ticklocsy <- seq(0,16,1)    # locations of tick marks on y axis
+ticklabelsx <- ticklocsx       # set labels for x ticks
+ticklabelsy <- ticklocsy    # set labels for y ticks
+
+plot(x=NULL,y=NULL,axes=FALSE, ann=FALSE, xlim=plotlims[1:2], ylim=plotlims[3:4])   
+axis(1, at=ticklocsx, tck=0.01, lab=F, lwd=2)     # plot tick marks (no labels)
+axis(2, at=ticklocsy, tck=0.01, lab=F, lwd=2)
+mtext(text = ticklabelsx, side = 1, at=ticklocsx)     # add the tick labels
+# mtext(text = ticklabelsy, side = 2, at=ticklocsy, line=0.2, las=1)  
+title(xlab="Horizontal position (deg)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)   
+title(ylab="Probability", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
+  
+lines(c(0,0),c(0,16),lwd=2,lty=2)
+lines(c(-8,-8),c(0,16),lwd=2,lty=3)
+lines(c(8,8),c(0,16),lwd=2,lty=3)
+
+coltrans1=rgb(0,0,0,alpha=0.2)
+coltrans2=rgb(0,0,1,alpha=0.2)
+coltrans3=rgb(1,0,0,alpha=0.2)
+
+for (s in 1:16){
+temp <- allcuetrials[s,]
+temp <- temp[which(!is.na(temp))]
+temp <- temp[temp>0]
+temp <- (temp-960)/36   # rescale to degrees
+a <- density(temp)
+denom <- max(a$y)
+a$y <- a$y/denom
+polygon(a$x, a$y+16-s, col=coltrans1,border=NA) 
+
+temp <- alllefttrials[s,]
+temp <- temp[which(!is.na(temp))]
+temp <- temp[temp>0]
+temp <- (temp-960)/36   # rescale to degrees
+a <- density(temp)
+a$y <- a$y/denom
+polygon(a$x, a$y+16-s, col=coltrans2,border=NA) 
+
+temp <- allrighttrials[s,]
+temp <- temp[which(!is.na(temp))]
+temp <- temp[temp>0]
+temp <- (temp-960)/36   # rescale to degrees
+a <- density(temp)
+a$y <- a$y/denom
+polygon(a$x, a$y+16-s, col=coltrans3,border=NA) 
+
+text(-14,16-s+0.5,paste0('P',eyetracksubIDs[s]))
+}
+
+dev.off()
+
+
+}
+
+```
+
 ```{r makeplotExpt1resps}
 #| include: false
 #| output: false
@@ -2148,13 +2311,13 @@ Individuals with neurodevelopmental disorders such as attention deficit hyperact
 
 The Posner cueing paradigm [@Posner1980] involves the participant attending to a central fixation point, then receiving a cue (which may be exogenous, where attention is captured through bottom-up processes; or endogenous, where attention is controlled by top-down processes, such as attending selectively to cues of the correct colour [@Leblanc2008]) indicating that a stimulus is about to appear either to the left or the right of the fixation point [@Thiery2016]. The assumption underlying the task is that if participants successfully orient their attention to the cued location, then their reaction times will be shorter and responses more accurate for congruent trials (where the stimulus appears at the cued location) than for incongruent trials (where the stimulus appears at the uncued location); this has been demonstrated extensively [@Thiery2016]. The reaction time difference was found by @Posner1978 to be 25ms faster for congruent trials and 40ms slower for incongruent trials, compared to a neutral cue condition.
 
-This paradigm has been combined with EEG to investigate the neural basis of spatial attention. For example, @Landau2007 investigated gamma-band activity during a Posner cueing task, comparing congruent and incongruent trials. Gamma range responses were associated with voluntary shifts in attention, e.g., attending to the left of the fixation point following a left-pointing arrow cue, but were absent when attention was involuntarily captured by the appearance of a stimulus in the uncued location on incongruent trials; this suggests that voluntary and involuntary processes of attention deployment are controlled by separate mechanisms. @Thiery2016 investigated two specific ERPs, the N2pc component (a negative response typically seen at around 200ms post stimulus, in the posterior-contralateral region) and the SPCN component (sustained posterior contralateral negativity). They used multivariate pattern analysis and used the decoder accuracy to determine that these two components were able to predict the focus of participants’ spatial attention. This was modulated by the varied distance of the stimulus from the central fixation (further being better decoded).
+This paradigm has been combined with EEG to investigate the neural basis of spatial attention. For example, @Landau2007 investigated gamma-band activity during a Posner cueing task, comparing congruent and incongruent trials. Gamma range responses were associated with voluntary shifts in attention, e.g., attending to the left of the fixation point following a left-pointing arrow cue, but were absent when attention was involuntarily captured by the appearance of a stimulus in the uncued location on incongruent trials; this suggests that voluntary and involuntary processes of attention deployment are controlled by separate mechanisms. @Thiery2016 investigated two specific ERPs, the N2pc component (a negative response typically seen at around 200ms post stimulus, in the posterior-contralateral region) and the SPCN component (sustained posterior contralateral negativity). They used multivariate pattern analysis and used the classifier accuracy to determine that these two components were able to predict the focus of participants’ spatial attention. This was modulated by the varied distance of the stimulus from the central fixation (further being better decoded).
 
 A combined EEG and TMS study by @Capotosto2012 demonstrated that the application of TMS to the right intraparietal sulcus (IPS) impairs target detection, particularly on incongruent trials. They additionally noted that the P3 response amplitude was affected by this; on incongruent trials its amplitude was significantly lower, and on congruent trials it was significantly higher. The IPS has been previously identified as an important region in attentional deployment by @Vossel2009 in an fMRI study identifying regions that are selectively active on congruent and incongruent trials. The right IPS and, additionally, the right inferior frontal gyrus were implicated in attentional processes related to both types of trial. @Peelen2004 concluded that both endogenous and exogenous orienting cues involve the same network in their fMRI study, implicating frontal and parietal regions (the premotor cortex, posterior parietal cortex, medial frontal cortex, and right inferior frontal cortex). @Fitzgerald2015 conducted an MRI study using the Posner cueing task and found that activation in the ventral attention network differed between individuals with autism and controls; individuals with autism also showed weaker functional connectivity in the dorsal attentional network compared to their neurotypical counterparts.
 
 A number of developmental disorders involve deficits in attention, notably ADHD and autism. In the case of ADHD, attention deficits are a defining feature of the condition (American Psychological Association, 2013). For autism, attention deficits are not an explicit part of the diagnostic criteria (although restricted interests, which are included, are somewhat related), but both attentional deficits and strengths are widely reported in autistic individuals. They are typically more distractible, demonstrating ‘underselective’ attention, but also demonstrate ‘overselective’ attention where they attend intensely to a more limited subset of stimuli. This ‘overselective’ attention has been suggested to be linked to restricted interests, which is also sometimes referred to as ‘hyperfocus’, where a task is the subject of intense focus for the individual [e.g., @Dupuis2022]. These differences appear to have a neural basis -- they have been linked to unusually wide sulci in the parietal lobe [@Allen2001]. Hyperfocus is also widely self-reported in ADHD, despite a lack of clinical research into the phenomenon [@Hupfeld2019].
 
-These marked differences in attentional deployment seen in both conditions are worth considering in the framework of the transdiagnostic approach, which seeks to identify core deficiencies that result in the presentation of traits from multiple disorders, instead of approaching different disorders as entirely separate even within the same individual [@Newby2015]. ADHD is the most common comorbidity of autism, and even without a dual diagnosis, 30-80% of individuals with autism present symptoms of ADHD, and 20-60% of children with ADHD exhibit autism-like traits [@Zhang2022]. Some shared deficiencies that have already been identified in the case of autism and ADHD include fine motor function and verbal fluency, alongside some structural differences in the brain [@Zhang2022].
+These marked differences in attentional deployment seen in both conditions are worth considering in the framework of the transdiagnostic approach, which seeks to identify core deficiencies that result in the presentation of traits from multiple disorders, instead of approaching different disorders as entirely separate even within the same individual [@Astle2022]. ADHD is the most common comorbidity of autism, and even without a dual diagnosis, 30-80% of individuals with autism present symptoms of ADHD, and 20-60% of children with ADHD exhibit autism-like traits [@Zhang2022]. Some shared deficiencies that have already been identified in the case of autism and ADHD include fine motor function and verbal fluency, alongside some structural differences in the brain [@Zhang2022].
 
 Stimming behaviours are commonly seen in individuals with diagnoses of autism and/or ADHD, and involve repetitive movements, typically featuring the arms, hands, or entire body [@Chadehumbe2018], for example hand flapping [@Kapp2019]. They are also observed in neurotypical individuals, but at much lower rates than in neurodiverse individuals [@Chadehumbe2018]. The behaviours are typically defined as involuntary, but pleasant [@Chadehumbe2018; @Kapp2019; @Steward2015], and are associated with emotional states such as stress, boredom, concentration, or excitement [@Mackenzie2018]. They are often defined as purposeless [e.g., @Tan1997] but self-reports from individuals with autism claim that stimming aids the regulation of their emotions [@Kapp2019; @Steward2015].
 
@@ -2265,9 +2428,46 @@ knitr::include_graphics(paste0(figdir,'Exp2summary.pdf'))
 
 ```
 
+We collected eye tracking data for a subset of the participants in Experiment 2 (16/22; for the remaining participants, the eye tracker was not able to calibrate successfully). We used these data to check if participants were able to follow the task instructions and fixate centrally throughout. The results are summarised in @fig-eyepositions. The grey distributions indicate horizontal fixation positions at the time of cue onset. For most participants these are close to the central fixation (0 deg, see vertical dashed line), though there are some notable consistent offsets that we attribute to calibration errors (e.g. P201, P223, P224). The coloured distributions indicate horizontal fixation positions at the time of target onset, following either a leftward (blue) or rightward (red) pointing cue. The majority of participants were able to follow the instructions and fixated centrally for both of these conditions, showing no systematic differences. One participant (P214) clearly made eye movements in the cued direction on most trials, and some participants (e.g. P209, P216, P218) showed evidence of sometimes making such eye movements. At a group level, there was a marginally significant difference between the mean horizontal positions for left vs right cues ($t$ = `r round(abs(eyetracktest$statistic),digits=2)`, $p$ < `r round(eyetracktest$p.value,digits=2)`), but the overall evidence was not compelling ($log_{10}BF_{10}$ = `r round(log10(extractBF(eyetrackBF)$bf),digits=2)`). We therefore conclude that in general participants were able to follow instructions appropriately, and that eye movements are unlikely to be responsible for the EEG effects of cueing.
+
+```{r plotExpt2eyepos}
+#| include: true
+#| output: true
+#| label: fig-eyepositions
+#| out.width: '60%'
+#| fig.cap: 'Distributions of horizontal eye positions for 16 participants during Experiment 2. Grey distributions represent eye positions at cue onset. Coloured distributions represent eye positions at target onset following a leftward pointing cue (blue) or a rightward pointing cue (red). Dotted vertical lines indicate the target locations (±8 degrees).'
+
+knitr::include_graphics(paste0(figdir,'eyepositions.pdf'))
+
+```
 
 # Discussion
 
+Overall, our results from Experiment 1 support the assertion that EEG data can be used as a metric of attentional deployment [@Thiery2016]. The classifier was able to differentiate both cue and target side from EEG recordings in Experiment 1, indicating we have recorded the neural correlates of attentional deployment, and that it is possible for a machine learning classifier to differentiate which direction of attentional deployment these signals represent. Extending this method in Experiment 2 by including the stimming manipulation suggested that stimming does not have a detrimental effect on attentional deployment, with our only negative impact of stimming being on reaction times. We will now discuss these results in greater detail, with a focus on the implications of this for research into stimming in the context of the neurodiversity movement.
+
+Behavioural data from Experiment 1 revealed a significant effect of congruency on both accuracy and reaction time, a typical Posner cueing effect wherein higher accuracy and shorter reaction times are associated with congruent over incongruent conditions [@Posner1978; @Thiery2016]. Experiment 1 further involved testing the classifier, which revealed that cue side was reliably decoded from 300ms post-stimulus onset onwards, reaching an accuracy level of 69%, and target side was reliably decoded from much earlier (100ms post-stimulus onset) and reached 89% accuracy. This sufficiently validated the use of the measure in Experiment 2 and supported prior research using similar techniques [@Thiery2016].
+
+Experiment 2 replicated this methodology with the addition of the stimming manipulation. Additionally, eye position data were recorded where possible, allowing us to confirm that in the majority of cases participants understood and followed the instructions, keeping their eyes fixated on the centre of the screen, and did not overtly move them following the cue. This confirms that the neural correlates we measured do not reflect eye movements, suggesting they are instead a genuine representation of the deployment of spatial attention.
+
+Analysis of the behavioural data revealed no significant effect of either stimming or congruency on accuracy. The effect of congruency on accuracy in Posner cueing tasks is robust [@Posner1978; @Thiery2016] and our version of the task generated this effect in Experiment 1, suggesting an external factor resulted in this difference in Experiment 2. For example, the conditions under which participants completed the experiment were quite different, as data for Experiment 1 were collected over the winter, while Experiment 2 was conducted in the summer, when the laboratory was very warm, potentially reducing participants' ability to focus on the task. Accuracy was lower overall for Experiment 2 than Experiment 1; participants in Experiment 1 averaged 96.18% for congruent trials and 93.37% for incongruent trials, while participants in Experiment 2 averaged 85.56%/86.09% for congruent trials and 86.30%/85.69% for incongruent trials (for non-stimming/stimming conditions, respectively). Difficulties resulting from external factors such as temperature and general comfort may have influenced the participants’ ability to attend to the experiment to the point where differences in accuracy became non-significant. Our finding that stimming had no effect on accuracy would therefore need to be validated through future replication; should it hold, it is an important one, as it suggests that stimming does not have a negative impact on individuals’ performance, countering the notion that stimming behaviours are detrimental and should be targeted through interventions [e.g., @Boyd2012; @FertelDaly2001]. These findings do not fully align with self-reports from autistic individuals, however, who report that stimming benefits attention [@Kapp2019]; accuracy was not greater in stimming conditions than non-stimming conditions. This may result from the proportion of our with autism being very small, so future research should aim to further investigate this in a larger sample. It has been suggested that stimming acts are a compensatory mechanism [@Kapp2019] for the previously discussed attention problems associated with autism [@Allen2001], so there is a possibility that positive effects of stimming are only seen in these individuals, which warrants further investigation.
+
+Reaction times for participants in Experiment 2 were also longer than for those in Experiment 1, again suggesting the participants experienced greater difficulty when completing the task under the external conditions of the second experiment. In Experiment 1, the average reaction time was 484ms for congruent trials and 535ms for incongruent trials, while in Experiment 2, the average reaction time was 557ms/611ms for congruent trials and 627/654ms for incongruent trials (for non-stimming/stimming conditions, respectively). However, analysis of the reaction time data did reveal a typical Posner cueing effect in regard to congruency: congruent trials were associated with shorter reaction times. Analysis also suggested a negative effect of stimming on reaction times, with reaction times being significantly slower when participants were stimming. Given the lack of impact observed on accuracy (and on EEG decoding, discussed next) it is likely this finding relates to stimming interfering with the participants’ ability to complete the task (they were required to respond to stimuli with buttons on the keyboard while moving their other hand) rather than stimming being inherently distracting. When we further divided participants into those who reported that they stim in their everyday lives and those who reported that they did not, we found the pattern only persisted in the former group; this may be due to the much smaller size of the latter group, as for the former group the Bayes factor and effect size were smaller for the effect of stimming than the effect of congruency, suggesting the relationship between stimming and reaction time is weaker than between congruency and reaction time. In a larger group of individuals who do not typically engage in stimming, this relationship might persist. Future research should aim to recruit larger sample sizes for various neurotypes and everyday stimming behaviours. It should also aim to adapt tasks so that there is no potential for the physical motion of stimming to interfere with the physical motion of completing a task, allowing the pure effects of stimming to be investigated.
+
+Classifier accuracy in Experiment 2 was lower overall than in Experiment 1, which was not unexpected given the smaller sample size and the fact that participants in Experiment 2 were moving, potentially introducing extra noise to the EEG signal. Within Experiment 2, classifier accuracy was largely similar between individuals who reported typically stimming and those who did not, validating comparisons between the groups based on classifier accuracy.
+
+A decrease in classifier accuracy was observed exclusively in the group who reported that they did not typically stim when they were asked to stim. The same was not true for the typically stimming group. We consider classifier accuracy here to be a measure of the strength of an individual’s ability to deploy their spatial attention, as stronger attentional deployment to the left or right should result in a greater condition-based difference in neural activity, making it easier for the classifier to differentiate the direction of their attention. Therefore, this suggests an individual’s ability to deploy their spatial attention is only reduced when they are asked to stim if they do not typically engage in the behaviour, contesting the notion that stimming is an inherently harmful behaviour. Further, it may give insight into where this concept originated; for individuals who do not typically stim, it appears to have negative consequences for their attentional abilities, which may lead them to assume that the same is true for everyone (which our evidence suggests is not the case). For individuals who typically engage in stimming behaviours, there does not appear to be an impact of stimming or not stimming on their attentional deployment, indicating that the behaviour is not detrimental; greater inclusion of neurodiverse individuals may allow for observation of a positive effect, as stimming has been proposed as a compensatory mechanism [@Kapp2019].
+
+It has long been claimed that stimming behaviours interrupt attention and learning, which has been used to justify therapies aiming to reduce these behaviours [e.g., @Boyd2012]. Our investigation contests this view, given our lack of evidence to suggest a negative impact of stimming on attention. The evidence often used to support this view of stimming behaviours falls foul to a host of methodological issues, such as incredibly small groups of participants [@Koegel1972], stopping children stimming entirely during the learning phase [@Varni1979], or not attempting to prevent stimming behaviours at all [@Pierce2001], thereby providing no real evidence for whether or not stimming affects learning abilities, or whether reducing them would have a beneficial impact. Indeed, self-reports from autistic individuals that the behaviours benefit their attention may mean this view is leading autism interventions in entirely the wrong direction when it comes to improving the quality of life of autistic individuals. Interventions that aim to reduce stimming are worryingly widespread, given their weak research base. Behavioural approaches, particularly common in North America [@Keenan2015], frequently target these behaviours [e.g., @Kapp2019; @Raulston2019]. Future research should attempt to take a similar approach to ours, investigating and allowing for the potential that stimming behaviours may have positive effects, or even no effect at all, to ensure we capture the full picture of stimming and its potential functions before encouraging interventions that target the behaviour.
+
+One factor that future research should take into consideration is that in our investigation, we directed participants to stim or refrain from stimming at certain times. It is unclear whether there is a subjective difference in stimming when it is genuinely self-generated compared to when it is externally prompted. This could explain the lack of a positive effect of stimming that we identified here, if only the truly self-generated form of stimming produces attentional effects. A careful balance needs to be struck between controlling experimental conditions and ensuring stimming behaviours are authentic to best understand them. Potentially, future research could benefit from a more naturalistic design, in which participants complete a task while stimming when it feels natural to them, with researchers recording start and end times of stimming periods to create stimming and non-stimming conditions. Likely the ideal method of dealing with this potential conflict is for researchers across the field to conduct investigations into stimming in a number of different ways, exploiting the strengths and weaknesses of various methodologies to obtain a full picture of stimming. It would also be beneficial to ask individuals who stim directly about whether or not they believe externally prompted stimming benefits them in the same way as self-directed stimming.
+
+Our investigation intended to lay the groundwork for an investigation into whether stimming behaviours in autism have the same underlying functions and mechanisms as fidgeting in ADHD. Given our limited sample size of participants with either disorder, we have not gathered sufficient evidence to suggest whether or not this is the case. However, we believe this route is a promising one for investigation under the framework of the transdiagnostic approach, especially given that there are overlaps in the benefits of stimming and fidgeting as reported by individuals with autism and ADHD. @Kapp2019 reported autistic individuals stated stimming benefitted their ability to focus, while @Canela2017 similarly reported that individuals with ADHD stated fidgeting aided in their productivity and concentration. A greater understanding of this behaviour across conditions may further our understanding of the similarities between autism and ADHD, a pressing research interest given the high comorbidity of the two conditions, with the current and lifetime prevalence rates of ADHD in the autistic population being estimated at 38.5% and 40.2% respectively [@Rong2021].
+
+Future research should additionally pursue other avenues of exploration into the potential benefits of stimming. In this case, we focused on attention, given that this is a commonly reported area in which stimming generates benefits in individuals in autism [@Kapp2019] and there is crossover with fidgeting in ADHD, which is also reported to benefit attention [@Canela2017]. However, autistic individuals report a number of other benefits of stimming, for example emotional regulation [@Kapp2019; @Steward2015]. In order to obtain a full picture of the mechanisms and functions of stimming, to fully understand the behaviour and thus inform interventions which aim to reduce the behaviour, future research should investigate all reported avenues in which stimming may benefit.
+
+Given that our investigation did not uncover a positive effect of stimming on attention, it could be suggested that interventions aiming to reduce stimming behaviours are not causing harm. Often these interventions are additionally justified on the basis that children who stim may be socially excluded or bullied as a result of their stimming behaviours [e.g., @Tse2018], and engaging in these behaviours can increase the likelihood of autistic children experiencing bullying [@Rex2018], which is a serious problem. However, even if we assume stimming has no positive effect (despite self-reports from autistic individuals saying it does), efforts may be better focused on educating an autistic child’s neurotypical teachers and peers on autism and stimming, cracking down on bullying, and teaching autistic children how to handle bullying. It has been demonstrated that describing and explaining autistic behaviours to children can improve their attitudes towards an autistic child [@Campbell2004], and a recent intervention teaching autistic children how to stand up to bullies achieved a reasonable level of success [@Rex2018]. Autistic children may experience bullying as a result of a wide variety of their autistic traits [@Chen2012]; surely, then, the best approach is to address the bullying, rather than encouraging autistic children to alter a wide variety of their own behaviours to avoid it. Particularly in the case of stimming, autistic adults protest against the elimination of these behaviours [@Kapp2019]. Even though we have been unable to demonstrate in a controlled setting that these behaviours have benefits, it is important to listen to the community we aim to help and respect their wishes.
+
+In summary, our results do not support prior literature suggesting stimming is a behaviour with negative consequences for attention. Rather, we find that in individuals who typically engage in stimming behaviours there is no particular detriment associated with doing so (excluding delayed reaction times, which potentially are an artefact of the experimental design). Negative impacts of stimming on attentional deployment were identified in individuals who do not typically engage in stimming behaviours, which may help explain why the perception has previously been that the behaviours are detrimental. This research had a predominantly neurotypical sample, and as such it is vital for future research to include a greater sample of autistic individuals to investigate whether stimming functions in the same way for this group as it appears to for neurotypicals who stim. Furthermore, the inclusion of a greater sample of individuals with ADHD may help uncover whether the fidgeting behaviours seen in ADHD may be similar to, or the same as, autistic stimming. Future research should also aim to investigate the potential benefits of stimming in a wider range of areas, given that individuals with autism also report benefits to emotional regulation [@Kapp2019] in addition to attention.
 
 # References
 
