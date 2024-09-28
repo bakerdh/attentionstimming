@@ -189,6 +189,22 @@ mnechans <- mnechans[c(1:12,14:18,20:64),1]  # exclude the mastoids
 electrodeindices <- match(toupper(mnechans),chandata$Electrode)
 }
 
+if (processdata==1){
+  if (!file.exists('local/processedE1.zip')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('processedE1.zip',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+  if (!file.exists('local/processedE2.zip')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('processedE2.zip',osffiles$name)
+osf_download(osffiles[fid,],path='local/')}
+
+unzip('local/processedE1.zip',exdir='local')
+unzip('local/processedE2.zip',exdir='local')
+}
+
 if (processdata<2){
   # download processed data if missing
   if (!file.exists('local/Expt1resps.RData')){
