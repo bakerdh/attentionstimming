@@ -10,6 +10,8 @@ execute:
   include: false
   output: false
 format: pdf
+header-includes: 
+  \usepackage{lineno} \linenumbers
 ---
 
 $^1$Department of Psychology, University of York, UK\
