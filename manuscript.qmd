@@ -18,7 +18,7 @@ $^2$Corresponding author, email: daniel.baker\@york.ac.uk
 ```{r setup}
 #| warning: false
 
-processdata <- 0
+processdata <- 1
 # the processdata flag has three levels:
 # 0 - just produce the manuscript with minimal analysis, using existing figures
 # 1 - do group-level analysis using pre-computed MVPA and ERPs (requires 200MB)
@@ -2326,7 +2326,7 @@ The deployment of spatial attention generates distinct neural signatures that ca
 
 The ability to orient and control the deployment of our attention to spatial locations or features of our environment is essential to our ability to perform tasks, focusing on relevant stimuli and disregarding those that are unnecessary for the task at hand [@Knudsen2007; @Hopfinger2000; @Rueda2011]. A classic technique for studying the deployment of attention in space is the Posner cueing paradigm, which demonstrates that it is possible for attention to be deployed to spatial locations independently of eye movements [@Posner1980].
 
-Individuals with neurodevelopmental disorders such as attention deficit hyperactivity disorder (ADHD) and autism present with deficits in attention (American Psychiatric Association, 2013; [@Allen2001]. It has been suggested that repetitive stereotypies, or 'stimming' behaviours, are linked to these deficits in attention -- in the few studies where they have been asked, individuals who stim report that it benefits their ability to focus, and that the behaviours aid in emotional regulation [@Kapp2019; @Steward2015]. It has been proposed that an improved ability to focus through stimming may have a neural basis [@McCarty2021]. Building on these theories and research, we tested the effect of stimming on performance in a Posner cueing task.
+Individuals with neurodevelopmental disorders such as attention deficit hyperactivity disorder (ADHD) and autism present with deficits in attention [@Allen2001]. It has been suggested that repetitive stereotypies, or 'stimming' behaviours, are linked to these deficits in attention -- in the few studies where they have been asked, individuals who stim report that it benefits their ability to focus, and that the behaviours aid in emotional regulation [@Kapp2019; @Steward2015]. It has been proposed that an improved ability to focus through stimming may have a neural basis [@McCarty2021]. Building on these theories and research, we tested the effect of stimming on performance in a Posner cueing task.
 
 The Posner cueing paradigm [@Posner1980] involves the participant attending to a central fixation point, then receiving a cue (which may be exogenous, where attention is captured through bottom-up processes; or endogenous, where attention is controlled by top-down processes, such as attending selectively to cues of the correct colour [@Leblanc2008]) indicating that a stimulus is about to appear either to the left or the right of the fixation point [@Thiery2016]. The assumption underlying the task is that if participants successfully orient their attention to the cued location, then their reaction times will be shorter and responses more accurate for congruent trials (where the stimulus appears at the cued location) than for incongruent trials (where the stimulus appears at the uncued location); this has been demonstrated extensively [@Thiery2016]. The reaction time difference was found by @Posner1978 to be 25ms faster for congruent trials and 40ms slower for incongruent trials, compared to a neutral cue condition.
 
