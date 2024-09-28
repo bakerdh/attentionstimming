@@ -220,7 +220,12 @@ osf_download(osffiles[fid,],path='local/')}
 osfproject <- osf_retrieve_node("dns89")
 osffiles <- osf_ls_files(osfproject,n_max=300)
 fid <- pmatch('Exp2GroupNoStim.RData',osffiles$name)
-osf_download(osffiles[fid,],path='local/')}  
+osf_download(osffiles[fid,],path='local/')} 
+      if (!file.exists('local/eyepositions.RData')){
+osfproject <- osf_retrieve_node("dns89")
+osffiles <- osf_ls_files(osfproject,n_max=300)
+fid <- pmatch('eyepositions.RData',osffiles$name)
+osf_download(osffiles[fid,],path='local/')} 
 }
 
 if (processdata==2){
@@ -1185,8 +1190,6 @@ congruent <- as.factor(rep(1:2,each=nrow(allRT),2))
 RTaov <- data.frame(RT,participant,stimcond,congruent)
 RTAOVresults <- ezANOVA(RTaov, dv=RT, wid=participant, within=c(stimcond,congruent))
 RTAOVBF <- anovaBF(RT ~ stimcond * congruent + participant, data=RTaov, whichModels='all', whichRandom = 'participant')
-
-print(reportsstimming)
 
 stimaccuracy <- allaccuracy[which(reportsstimming>0),]
 accuracy <- as.vector(stimaccuracy)
