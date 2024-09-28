@@ -1186,6 +1186,7 @@ RTaov <- data.frame(RT,participant,stimcond,congruent)
 RTAOVresults <- ezANOVA(RTaov, dv=RT, wid=participant, within=c(stimcond,congruent))
 RTAOVBF <- anovaBF(RT ~ stimcond * congruent + participant, data=RTaov, whichModels='all', whichRandom = 'participant')
 
+print(reportsstimming)
 
 stimaccuracy <- allaccuracy[which(reportsstimming>0),]
 accuracy <- as.vector(stimaccuracy)
