@@ -1696,7 +1696,7 @@ title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)
 title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
-lines(c(0,0),c(0,1),lty=3)
+lines(c(0,0),c(0.4,1),lty=3)
 
 polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$Cue+CIdecoding$Cue, meandecoding$Cue[1201:1]-CIdecoding$Cue[1201:1]), col=flatalpha('blue',0.2), border=NA)
 
@@ -1726,7 +1726,7 @@ title(xlab="Time (ms)", col.lab=rgb(0,0,0), line=1.2, cex.lab=1.5)
 title(ylab="Proportion correct     ", col.lab=rgb(0,0,0), line=1.5, cex.lab=1.5)
 
 lines(c(-200,1000),c(0.5,0.5),lty=2)
-lines(c(0,0),c(0,1),lty=3)
+lines(c(0,0),c(0.4,1),lty=3)
 
 polygon(meandecoding$Time[c(1:1201,1201:1)],c(meandecoding$TargetB+CIdecoding$TargetB, meandecoding$TargetB[1201:1]-CIdecoding$TargetB[1201:1]), col=flatalpha('black',0.2), border=NA)
 

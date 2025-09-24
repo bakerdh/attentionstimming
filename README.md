@@ -1,6 +1,6 @@
 These materials are a computationally reproducible version of the paper:
 
-Smith & Baker (2024). Neural correlates of the deployment of spatial attention, and their modulation by repetitive movements.
+Smith, C. & Baker, D.H. (2025). Neural correlates of the deployment of spatial attention, and their modulation by repetitive movements. *PLoS ONE*, 20(9): e0332583. https://doi.org/10.1371/journal.pone.0332583
 
 The file manuscript.qmd is a Quarto markdown file that will perform all analyses and figure creation, and produce a pdf version of the manuscript.
 
